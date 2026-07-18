@@ -1,3 +1,7 @@
 name = "xon5-chess"
 compatibility_date = "2026-07-19"
-pages_build_output_dir = "dist"
+
+# Static Vite/PWA build — Cloudflare Git deploys with `wrangler deploy`
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
