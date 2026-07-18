@@ -1,0 +1,3 @@
+allowBuilds:
+  stockfish: true
+  esbuild: true

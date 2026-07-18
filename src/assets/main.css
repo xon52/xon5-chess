@@ -1,0 +1,64 @@
+@import '@fontsource-variable/fraunces/wght.css';
+@import '@fontsource/source-sans-3/400.css';
+@import '@fontsource/source-sans-3/600.css';
+@import '@lichess-org/chessground/assets/chessground.base.css';
+@import '@lichess-org/chessground/assets/chessground.brown.css';
+@import '@lichess-org/chessground/assets/chessground.cburnett.css';
+
+:root {
+  --color-felt: #1a3d2e;
+  --color-felt-deep: #0f2419;
+  --color-felt-mid: #245a42;
+  --color-walnut: #5c3d2e;
+  --color-walnut-light: #8b6347;
+  --color-ivory: #e8dcc8;
+  --color-ivory-muted: #c4b49a;
+  --color-ink: #1a120c;
+  --color-board-edge: #3d2817;
+  --font-display: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+  --font-body: 'Source Sans 3', system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Chessground expects content-box on the wrap for piece/square sizing. */
+.cg-wrap {
+  box-sizing: content-box !important;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-ivory);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, var(--color-felt-mid) 0%, transparent 55%),
+    radial-gradient(ellipse 100% 80% at 50% 100%, #0a1810 0%, transparent 50%),
+    linear-gradient(165deg, var(--color-felt) 0%, var(--color-felt-deep) 55%, #0a1810 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
