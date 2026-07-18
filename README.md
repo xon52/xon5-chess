@@ -36,8 +36,6 @@ Git-connected Workers (current Cloudflare default) runs `wrangler deploy` after 
 2. Config is in `wrangler.toml` (`[assets]` → `./dist`, SPA `not_found_handling`).
 3. Push to the connected branch; Cloudflare builds and deploys automatically.
 
-`public/_redirects` remains for classic Pages; Workers SPA routing uses `not_found_handling` instead.
-
 ## Offline / install weight
 
 The PWA caches local fonts plus Stockfish lite (~7MB WASM). Expect a larger first install than a typical marketing site; after that, play works offline.
