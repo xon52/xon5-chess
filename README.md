@@ -28,13 +28,15 @@ Built with Vue 3 + Vite, and optionally packaged with Tauri 2 for desktop.
 
 Shared top nav on every page.
 
-## Deploy to Cloudflare Pages
+## Deploy to Cloudflare
 
-1. Build with `pnpm build:web` (output: `dist`).
-2. Set the Pages build output directory to `dist`.
-3. SPA fallback is provided by `public/_redirects` (`/* /index.html 200`).
+Git-connected Workers (current Cloudflare default) runs `wrangler deploy` after your build.
 
-Optional: use the included `wrangler.toml` (`pages_build_output_dir = "dist"`).
+1. Build command: `pnpm build:web` (output: `dist`).
+2. Config is in `wrangler.toml` (`[assets]` → `./dist`, SPA `not_found_handling`).
+3. Push to the connected branch; Cloudflare builds and deploys automatically.
+
+`public/_redirects` remains for classic Pages; Workers SPA routing uses `not_found_handling` instead.
 
 ## Offline / install weight
 
