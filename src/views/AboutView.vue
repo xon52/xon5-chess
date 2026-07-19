@@ -22,34 +22,32 @@ import { DIFFICULTY_PRESETS } from '@/game/difficulty'
       <h2 class="page__subtitle">How it works</h2>
       <p>
         The opponent is Stockfish configured with two controls:
-        <strong>Skill Level</strong> (how readily it blunders) and fixed
-        <strong>Depth</strong> (how far it can see). Play searches use those settings only — not
-        time-based Elo limiting. Evaluation for the win% graph stays uncapped so strength limiting
-        does not poison the displayed score.
+        <strong>Skill Level</strong> (how often it picks a weaker candidate) and
+        <strong>Depth</strong> (how far it looks). Skill Level weights poorer moves more at lower
+        settings, but only within a score window — it avoids catastrophic “free queen” hangs that
+        blind ranking of MultiPV lines can allow. Play searches use those settings only — not
+        time-based Elo limiting. Evaluation for the win% graph stays at full skill so strength
+        limiting does not poison the displayed score.
       </p>
       <p>
-        When configuring lower settings, remember that Skill Level changes how it blunders, while
-        Depth changes what it can see. Stockfish’s built-in Skill Level only shuffles among
-        otherwise strong candidate moves — it will still take free pieces. At Skill 0, xon5-chess
-        therefore skips Stockfish entirely and picks beginner moves that often hang pieces and miss
-        free captures (the next band starts taking free pieces again).
+        There is no Elo rating claim — difficulty is named levels only.
       </p>
 
-      <div class="page__table-wrap" role="region" aria-label="Difficulty bands">
+      <div class="page__table-wrap" role="region" aria-label="Difficulty levels">
         <table class="page__table">
           <thead>
             <tr>
+              <th scope="col">Level</th>
               <th scope="col">Skill</th>
               <th scope="col">Depth</th>
-              <th scope="col">Estimated Elo</th>
               <th scope="col">Profile</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="band in DIFFICULTY_PRESETS" :key="band.id">
-              <td>{{ band.skillDisplay }}</td>
-              <td>{{ band.depthDisplay }}</td>
-              <td>{{ band.eloDisplay }}</td>
+              <td>{{ band.name }}</td>
+              <td>{{ band.playSkill }}</td>
+              <td>{{ band.playDepth }}</td>
               <td>{{ band.profile }}</td>
             </tr>
           </tbody>

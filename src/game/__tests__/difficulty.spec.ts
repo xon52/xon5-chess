@@ -9,38 +9,41 @@ import {
 } from '@/game/difficulty'
 
 describe('difficulty', () => {
-  it('exposes seven product-capped presets', () => {
-    expect(DIFFICULTY_PRESETS).toHaveLength(7)
-    expect(DEFAULT_DIFFICULTY_ID).toBe('s0-d1')
+  it('exposes ten named presets', () => {
+    expect(DIFFICULTY_PRESETS).toHaveLength(10)
+    expect(DEFAULT_DIFFICULTY_ID).toBe('level-1')
   })
 
-  it('keeps playSkill and playDepth at or below 8', () => {
+  it('keeps skill and depth in UCI-safe ranges', () => {
     for (const preset of DIFFICULTY_PRESETS) {
-      expect(preset.playSkill).toBeLessThanOrEqual(8)
-      expect(preset.playDepth).toBeLessThanOrEqual(8)
       expect(preset.playSkill).toBeGreaterThanOrEqual(0)
+      expect(preset.playSkill).toBeLessThanOrEqual(20)
       expect(preset.playDepth).toBeGreaterThanOrEqual(1)
+      expect(preset.playDepth).toBeLessThanOrEqual(20)
     }
   })
 
-  it('resolves known ids and falls back to default', () => {
-    expect(resolveDifficultyId('s4-d5')).toBe('s4-d5')
+  it('resolves known ids, migrates legacy ids, and falls back to default', () => {
+    expect(resolveDifficultyId('level-5')).toBe('level-5')
+    expect(resolveDifficultyId('s4-d5')).toBe('level-5')
+    expect(resolveDifficultyId('s0-d1')).toBe('level-1')
+    expect(resolveDifficultyId('s8-d8')).toBe('level-7')
     expect(resolveDifficultyId('missing')).toBe(DEFAULT_DIFFICULTY_ID)
     expect(resolveDifficultyId(null)).toBe(DEFAULT_DIFFICULTY_ID)
     expect(resolveDifficultyId(42)).toBe(DEFAULT_DIFFICULTY_ID)
   })
 
   it('getDifficulty returns the matching preset', () => {
-    expect(getDifficulty('s8-d8')).toMatchObject({
-      playSkill: 8,
-      playDepth: 8,
-      eloDisplay: '1800 – 2100',
+    expect(getDifficulty('level-10')).toMatchObject({
+      name: 'Maximum',
+      playSkill: 20,
+      playDepth: 14,
     })
   })
 
-  it('formats dropdown labels with skill, depth, and elo range', () => {
-    expect(formatDifficultyLabel(getDifficulty('s1-d3'))).toBe(
-      'Skill 1 – 2 · Depth 3 – 4 · Elo 700 – 900',
+  it('formats dropdown labels with name, skill, and depth', () => {
+    expect(formatDifficultyLabel(getDifficulty('level-6'))).toBe(
+      'Strong club · Skill 9 · Depth 6',
     )
   })
 })

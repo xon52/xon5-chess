@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   fenSideToMove,
+  MultipvAggregator,
   parseBestMoveLine,
   parseInfoScore,
+  parseMultipvInfoLine,
   parseUciMove,
   planEvalSearch,
   planPlaySearch,
@@ -36,28 +38,31 @@ describe('uci helpers', () => {
     expect(parseBestMoveLine('info depth 12')).toBeNull()
   })
 
-  it('plans skill+depth play searches', () => {
+  it('plans skill+depth play searches and raises depth so Skill Level can fire', () => {
     expect(planPlaySearch({ skill: 0, depth: 1 })).toEqual({
       setOptions: [
         'setoption name UCI_LimitStrength value false',
         'setoption name Skill Level value 0',
+        'setoption name MultiPV value 1',
       ],
       go: 'go depth 1',
     })
-    expect(planPlaySearch({ skill: 8, depth: 8 })).toEqual({
+    expect(planPlaySearch({ skill: 9, depth: 6 })).toEqual({
       setOptions: [
         'setoption name UCI_LimitStrength value false',
-        'setoption name Skill Level value 8',
+        'setoption name Skill Level value 9',
+        'setoption name MultiPV value 1',
       ],
-      go: 'go depth 9',
+      go: 'go depth 10',
     })
   })
 
-  it('plans uncapped eval search', () => {
+  it('plans uncapped eval search with MultiPV 1', () => {
     expect(planEvalSearch(500)).toEqual({
       setOptions: [
         'setoption name UCI_LimitStrength value false',
         'setoption name Skill Level value 20',
+        'setoption name MultiPV value 1',
       ],
       go: 'go movetime 500',
     })
@@ -68,6 +73,34 @@ describe('uci helpers', () => {
       fenSideToMove('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'),
     ).toBe('b')
     expect(fenSideToMove(DEFAULT_POSITION)).toBe('w')
+  })
+
+  it('parses multipv info lines and aggregates by max depth', () => {
+    expect(
+      parseMultipvInfoLine('info depth 4 multipv 2 score cp 10 pv d2d4 e7e5'),
+    ).toEqual({
+      multipv: 2,
+      depth: 4,
+      move: { from: 'd2', to: 'd4', promotion: undefined },
+    })
+    expect(parseMultipvInfoLine('info depth 4 score cp 10 pv e2e4')).toBeNull()
+
+    const agg = new MultipvAggregator()
+    agg.ingest('info depth 3 multipv 1 score cp 20 pv e2e4')
+    agg.ingest('info depth 3 multipv 2 score cp 10 pv d2d4')
+    agg.ingest('info depth 4 multipv 1 score cp 25 pv e2e4')
+    // Stale multipv 2 at depth 3 must not appear; missing #2 at depth 4 → prefix of 1.
+    expect(agg.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
+    agg.ingest('info depth 4 multipv 2 score cp 12 pv d2d4')
+    expect(agg.rankedMoves()).toEqual([
+      { from: 'e2', to: 'e4', promotion: undefined },
+      { from: 'd2', to: 'd4', promotion: undefined },
+    ])
+    // Gap at multipv 2 stops contiguous prefix.
+    const gappy = new MultipvAggregator()
+    gappy.ingest('info depth 5 multipv 1 score cp 1 pv e2e4')
+    gappy.ingest('info depth 5 multipv 3 score cp 0 pv c2c4')
+    expect(gappy.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
   })
 
   it('parses info score lines including bound tags', () => {

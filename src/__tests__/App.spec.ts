@@ -65,7 +65,7 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Resign')
     expect(wrapper.text()).toContain('Flip')
     expect(wrapper.text()).not.toContain('Ready to play')
-    expect(localStorage.getItem('xon5.difficultyId')).toBe('s0-d1')
+    expect(localStorage.getItem('xon5.difficultyId')).toBe('level-1')
     expect(localStorage.getItem('xon5.activeColor')).toBe('w')
   })
 })

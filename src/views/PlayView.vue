@@ -331,11 +331,17 @@ const choosePromotion = (piece: PromotionPiece) => {
   padding: 0.45rem 0.5rem;
   border: 1px solid rgb(232 220 200 / 0.28);
   border-radius: 0;
-  background: rgb(0 0 0 / 0.2);
+  background: var(--color-felt-deep);
   color: var(--color-ivory);
+  color-scheme: dark;
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+}
+
+.play__difficulty-select option {
+  background: var(--color-ink);
+  color: var(--color-ivory);
 }
 
 .play__actions {

@@ -9,13 +9,18 @@ import {
   type UciMove,
   type UciScore,
 } from '@/engine/uci'
-import { maybeWeakenMove, skipsEngineSearch, pickBeginnerMove } from '@/engine/weaken'
 
 /** Eval search budget (SPEC §5). Not strength-capped. */
 export const EVAL_MOVETIME_MS = 500
 
+export type PlaySearchOpts = {
+  fen: string
+  skill: number
+  depth: number
+}
+
 export type EngineClient = {
-  playSearch(opts: { fen: string; skill: number; depth: number }): Promise<UciMove | null>
+  playSearch(opts: PlaySearchOpts): Promise<UciMove | null>
   evalSearch(opts: { fen: string }): Promise<UciScore | null>
   notifyNewGame(): void
   /** Fire-and-forget cancel; may leave the worker draining. Prefer stopAndDrain when resuming. */
@@ -82,11 +87,11 @@ const createDefaultClient = (): EngineClient => {
     }
   }
 
-  const finishPlay = (seq: number, line: string) => {
+  const finishPlay = (seq: number, bestmoveLine: string) => {
     const { resolve } = pendingPlay!
     pendingPlay = null
     job = 'idle'
-    resolve(seq === searchSeq ? parseBestMoveLine(line) : null)
+    resolve(seq === searchSeq ? parseBestMoveLine(bestmoveLine) : null)
   }
 
   const finishEval = (seq: number) => {
@@ -252,25 +257,7 @@ const createDefaultClient = (): EngineClient => {
     })
   }
 
-  const playSearch = async (opts: {
-    fen: string
-    skill: number
-    depth: number
-  }): Promise<UciMove | null> => {
-    // True beginners never call Stockfish — Skill Level still takes free pieces.
-    if (skipsEngineSearch(opts.skill)) {
-      if (job === 'play') {
-        return null
-      }
-      if (job === 'eval' || job === 'draining') {
-        await stopCurrentSearch()
-      }
-      if (job !== 'idle') {
-        return null
-      }
-      return pickBeginnerMove(opts.fen, opts.depth)
-    }
-
+  const playSearch = async (opts: PlaySearchOpts): Promise<UciMove | null> => {
     await ensureReady()
 
     if (job === 'eval' || job === 'draining') {
@@ -291,15 +278,7 @@ const createDefaultClient = (): EngineClient => {
     send(`position fen ${opts.fen}`)
 
     return new Promise<UciMove | null>((resolve) => {
-      pendingPlay = {
-        seq,
-        resolve: (move) => {
-          // Do not invent a move when the search was cancelled (null).
-          resolve(
-            move ? maybeWeakenMove(opts.fen, opts.skill, opts.depth, move) : null,
-          )
-        },
-      }
+      pendingPlay = { seq, resolve }
       send(plan.go)
     })
   }

@@ -92,7 +92,7 @@ describe('useGameStore', () => {
 
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('s0-d1')
+    expect(store.difficultyId).toBe('level-1')
     expect(store.isHumanTurn).toBe(true)
     expect(store.orientation).toBe('white')
     expect(store.history).toEqual([])
@@ -101,14 +101,14 @@ describe('useGameStore', () => {
 
   it('setDifficultyId persists across reset', () => {
     const store = useGameStore()
-    store.setDifficultyId('s4-d5')
+    store.setDifficultyId('level-5')
     store.activeColor = 'w'
     store.newGame()
-    expect(store.difficultyId).toBe('s4-d5')
+    expect(store.difficultyId).toBe('level-5')
 
     store.reset()
     expect(store.humanColor).toBeNull()
-    expect(store.difficultyId).toBe('s4-d5')
+    expect(store.difficultyId).toBe('level-5')
   })
 
   it('newGame as Black locks the board on White to move', () => {
@@ -154,8 +154,8 @@ describe('useGameStore', () => {
 
     expect(store.startFirstVisitIfNeeded()).toBe(true)
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('s0-d1')
-    expect(localStorage.getItem('xon5.difficultyId')).toBe('s0-d1')
+    expect(store.difficultyId).toBe('level-1')
+    expect(localStorage.getItem('xon5.difficultyId')).toBe('level-1')
     expect(localStorage.getItem('xon5.activeColor')).toBe('w')
     expect(store.startFirstVisitIfNeeded()).toBe(false)
   })
@@ -301,13 +301,13 @@ describe('useGameStore', () => {
   it('newGame replaces an in-progress game', () => {
     const store = startAsWhite()
     store.tryMove({ from: 'd2', to: 'd4' })
-    store.setDifficultyId('s4-d5')
+    store.setDifficultyId('level-5')
     store.newGame()
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.turn).toBe('w')
     expect(store.history).toEqual([])
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('s4-d5')
+    expect(store.difficultyId).toBe('level-5')
     expect(store.isHumanTurn).toBe(true)
   })
 
@@ -477,7 +477,7 @@ describe('useGameStore', () => {
       const playSearch = vi.fn(async () => ({ from: 'e7', to: 'e5' }) satisfies UciMove)
       const mock = installEngineMock({ playSearch })
       const store = startAsWhite()
-      store.setDifficultyId('s4-d5')
+      store.setDifficultyId('level-5')
 
       expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
       expect(store.engineThinking).toBe(true)
@@ -486,7 +486,7 @@ describe('useGameStore', () => {
 
       expect(playSearch).toHaveBeenCalledWith({
         fen: expect.stringContaining('4P3'),
-        skill: 4,
+        skill: 7,
         depth: 5,
       })
       expect(store.history).toEqual(['e4', 'e5'])

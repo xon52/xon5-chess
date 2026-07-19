@@ -205,10 +205,14 @@ export const useGameStore = defineStore('game', () => {
     bumpEvalSearchGeneration()
     engineThinking.value = true
     const positionFen = fen.value
-    const { playSkill, playDepth } = getDifficulty(difficultyId.value)
+    const preset = getDifficulty(difficultyId.value)
 
     void getEngineClient()
-      .playSearch({ fen: positionFen, skill: playSkill, depth: playDepth })
+      .playSearch({
+        fen: positionFen,
+        skill: preset.playSkill,
+        depth: preset.playDepth,
+      })
       .then((move) => {
         if (generation !== playSearchGeneration) {
           return

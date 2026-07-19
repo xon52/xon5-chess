@@ -132,7 +132,7 @@ describe('PlayView', () => {
 
     // Seed prefs so PlayView does not auto-start a first-visit game.
 
-    saveDifficulty('s0-d1')
+    saveDifficulty('level-1')
 
     saveActiveColor('w')
 
@@ -302,7 +302,7 @@ describe('PlayView', () => {
 
       expect(store.humanColor).toBe('w')
 
-      expect(store.difficultyId).toBe('s0-d1')
+      expect(store.difficultyId).toBe('level-1')
 
       expect(store.isHumanTurn).toBe(true)
 
@@ -336,15 +336,15 @@ describe('PlayView', () => {
 
       const select = wrapper.find('.play__difficulty-select')
 
-      await select.setValue('s4-d5')
+      await select.setValue('level-5')
 
       await nextTick()
 
 
 
-      expect(store.difficultyId).toBe('s4-d5')
+      expect(store.difficultyId).toBe('level-5')
 
-      expect(select.text()).toContain('1300')
+      expect(select.text()).toContain('Solid')
 
     })
 
@@ -366,11 +366,11 @@ describe('PlayView', () => {
 
       expect(store.activeColor).toBe('w')
 
-      expect(store.difficultyId).toBe('s0-d1')
+      expect(store.difficultyId).toBe('level-1')
 
       expect(store.isHumanTurn).toBe(true)
 
-      expect(localStorage.getItem('xon5.difficultyId')).toBe('s0-d1')
+      expect(localStorage.getItem('xon5.difficultyId')).toBe('level-1')
 
       expect(localStorage.getItem('xon5.activeColor')).toBe('w')
 

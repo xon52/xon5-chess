@@ -24,12 +24,20 @@ describe('prefs', () => {
   })
 
   it('round-trips difficulty and activeColor', () => {
-    saveDifficulty('s6-d7')
+    saveDifficulty('level-6')
     saveActiveColor('b')
     expect(hasStoredPrefs()).toBe(true)
     expect(loadPrefs()).toEqual({
-      difficultyId: 's6-d7',
+      difficultyId: 'level-6',
       activeColor: 'b',
+    })
+  })
+
+  it('migrates legacy skill-depth ids on load', () => {
+    localStorage.setItem('xon5.difficultyId', 's6-d7')
+    expect(loadPrefs()).toEqual({
+      difficultyId: 'level-6',
+      activeColor: 'w',
     })
   })
 

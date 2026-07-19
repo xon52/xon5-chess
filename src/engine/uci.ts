@@ -71,6 +71,81 @@ export const parseInfoScore = (line: string): UciScore | null => {
   return { kind: m[1] as 'cp' | 'mate', value: Number(m[2]) }
 }
 
+/** One MultiPV info line with a usable first PV move (for play rank sampling). */
+export type MultipvInfoLine = {
+  multipv: number
+  depth: number
+  move: UciMove
+}
+
+/**
+ * Parse `info … multipv K … depth D … pv <move> …`.
+ * Requires multipv + depth + pv first-move; returns null otherwise.
+ * Bound-tagged lines are accepted when they still include a pv move.
+ */
+export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('info ')) {
+    return null
+  }
+  const multipvMatch = /\bmultipv (\d+)\b/.exec(trimmed)
+  const depthMatch = /\bdepth (\d+)\b/.exec(trimmed)
+  const pvMatch = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)\b/i.exec(trimmed)
+  if (!multipvMatch || !depthMatch || !pvMatch) {
+    return null
+  }
+  const move = parseUciMove(pvMatch[1]!)
+  if (!move) {
+    return null
+  }
+  return {
+    multipv: Number(multipvMatch[1]),
+    depth: Number(depthMatch[1]),
+    move,
+  }
+}
+
+/**
+ * Keep MultiPV lines for the deepest completed depth only.
+ * When depth advances, the prior map is cleared. Returns ranked moves
+ * (index 0 = multipv 1) as a contiguous prefix from multipv 1.
+ */
+export class MultipvAggregator {
+  private maxDepth = 0
+  private byIndex = new Map<number, UciMove>()
+
+  ingest(line: string): void {
+    const parsed = parseMultipvInfoLine(line)
+    if (!parsed) {
+      return
+    }
+    if (parsed.depth > this.maxDepth) {
+      this.maxDepth = parsed.depth
+      this.byIndex.clear()
+    }
+    if (parsed.depth === this.maxDepth) {
+      this.byIndex.set(parsed.multipv, parsed.move)
+    }
+  }
+
+  /** Contiguous prefix from multipv 1; empty if #1 missing. */
+  rankedMoves(): UciMove[] {
+    if (!this.byIndex.has(1)) {
+      return []
+    }
+    const out: UciMove[] = []
+    for (let i = 1; this.byIndex.has(i); i++) {
+      out.push(this.byIndex.get(i)!)
+    }
+    return out
+  }
+
+  reset(): void {
+    this.maxDepth = 0
+    this.byIndex.clear()
+  }
+}
+
 /**
  * Convert a UCI score (side-to-move perspective) to whole-number White/Black %.
  * SPEC §7: normalize to White, K = 400, mates → 100/0 or 0/100.
@@ -95,24 +170,30 @@ export const scoreToWhiteBlackPct = (
   return { white, black: 100 - white }
 }
 
-/** Build setoption + go for a skill+depth play search (product difficulty bands). */
+/**
+ * Build setoption + go for a skill+depth play search.
+ * Stockfish applies Skill Level at depth === 1 + skill; search must reach that ply.
+ * MultiPV stays 1 so play does not leak multipv lines into later eval.
+ */
 export const planPlaySearch = (opts: { skill: number; depth: number }): UciCommandPlan => {
-  // Stockfish applies Skill Level at depth === 1 + skill; search must reach that ply.
-  const depth = Math.max(opts.depth, opts.skill + 1)
+  const skill = Math.max(0, Math.min(20, Math.floor(opts.skill)))
+  const depth = Math.max(opts.depth, skill + 1)
   return {
     setOptions: [
       'setoption name UCI_LimitStrength value false',
-      `setoption name Skill Level value ${opts.skill}`,
+      `setoption name Skill Level value ${skill}`,
+      'setoption name MultiPV value 1',
     ],
     go: `go depth ${depth}`,
   }
 }
 
-/** Build setoption + go for an uncapped eval search (SPEC §5 / §7). */
+/** Build setoption + go for an uncapped eval search (SPEC §5 / §7). Always MultiPV 1. */
 export const planEvalSearch = (evalMovetimeMs: number): UciCommandPlan => ({
   setOptions: [
     'setoption name UCI_LimitStrength value false',
     'setoption name Skill Level value 20',
+    'setoption name MultiPV value 1',
   ],
   go: `go movetime ${evalMovetimeMs}`,
 })
