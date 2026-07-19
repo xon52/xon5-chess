@@ -113,57 +113,40 @@ describe('stockfishClient', () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
-    const first = client.playSearch({ fen, elo: 1200 })
+    const first = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go '))).toBe(true))
 
-    const second = await client.playSearch({ fen, elo: 1200 })
+    const second = await client.playSearch({ fen, skill: 20, depth: 3 })
     expect(second).toBeNull()
 
     releaseGo()
     await expect(first).resolves.toEqual({ from: 'e7', to: 'e5' })
   })
 
-  it('applies UCI_LimitStrength and Elo for play searches in range', async () => {
+  it('applies Skill Level and go depth for play searches', async () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-    const move = await client.playSearch({ fen, elo: 1500 })
+    const move = await client.playSearch({ fen, skill: 20, depth: 5 })
     expect(move).toEqual({ from: 'e2', to: 'e4' })
 
-    expect(lastWorker!.commands).toContain('setoption name UCI_LimitStrength value true')
-    expect(lastWorker!.commands).toContain('setoption name UCI_Elo value 1500')
-    expect(lastWorker!.commands.some((c) => c.startsWith('go movetime'))).toBe(true)
-  })
-
-  it('uses Skill+depth fallback for default Elo 1200 (below UCI_Elo min 1320)', async () => {
-    const client = getEngineClient()
-    const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-    await client.playSearch({ fen, elo: 1200 })
-
     expect(lastWorker!.commands).toContain('setoption name UCI_LimitStrength value false')
-    expect(lastWorker!.commands).toContain('setoption name Skill Level value 9')
-    expect(lastWorker!.commands).toContain('go depth 11')
+    expect(lastWorker!.commands).toContain('setoption name Skill Level value 20')
+    expect(lastWorker!.commands).toContain('go depth 21')
     expect(lastWorker!.commands.some((c) => c.includes('UCI_Elo'))).toBe(false)
   })
 
-  it('falls back to Skill+depth at Elo 500 (below UCI_Elo min)', async () => {
+  it('skill 0 skips Stockfish and returns beginner moves', async () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-    await client.playSearch({ fen, elo: 500 })
-
-    expect(lastWorker!.commands).toContain('setoption name UCI_LimitStrength value false')
-    expect(lastWorker!.commands).toContain('setoption name Skill Level value 0')
-    expect(lastWorker!.commands).toContain('go depth 6')
-    expect(lastWorker!.commands.some((c) => c.includes('UCI_Elo'))).toBe(false)
-  })
-
-  it('applies UCI_Elo at Elo 2000 (within UCI_Elo range)', async () => {
-    const client = getEngineClient()
-    const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-    await client.playSearch({ fen, elo: 2000 })
-
-    expect(lastWorker!.commands).toContain('setoption name UCI_LimitStrength value true')
-    expect(lastWorker!.commands).toContain('setoption name UCI_Elo value 2000')
-    expect(lastWorker!.commands).toContain('go movetime 1000')
+    const cmdsBefore = lastWorker?.commands.length ?? 0
+    const moves = new Set<string>()
+    for (let i = 0; i < 30; i++) {
+      const m = await client.playSearch({ fen, skill: 0, depth: 1 })
+      expect(m).not.toBeNull()
+      moves.add(`${m!.from}${m!.to}`)
+    }
+    expect(moves.size).toBeGreaterThan(1)
+    expect(lastWorker?.commands.length ?? 0).toBe(cmdsBefore)
   })
 
   it('evalSearch uses uncapped movetime 500 with LimitStrength false and Skill Level max', async () => {
@@ -251,7 +234,7 @@ describe('stockfishClient', () => {
     const evalPromise = client.evalSearch({ fen })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go movetime'))).toBe(true))
 
-    const playPromise = client.playSearch({ fen, elo: 1200 })
+    const playPromise = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker!.commands).toContain('stop'))
 
     // Drain completes via stop's bestmove (none); releasing the latch must not
@@ -295,7 +278,7 @@ describe('stockfishClient', () => {
     const evalPromise = client.evalSearch({ fen })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go movetime'))).toBe(true))
 
-    const playPromise = client.playSearch({ fen, elo: 1200 })
+    const playPromise = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker!.commands).toContain('stop'))
     // Play must not resolve from stop's bestmove (none).
     await expect(evalPromise).resolves.toBeNull()
@@ -358,7 +341,7 @@ describe('stockfishClient', () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
 
-    const playPromise = client.playSearch({ fen, elo: 1200 })
+    const playPromise = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go '))).toBe(true))
 
     const drainPromise = client.stopAndDrain()
@@ -402,7 +385,7 @@ describe('stockfishClient', () => {
     const fenA = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
     const fenB = 'rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1'
 
-    const first = client.playSearch({ fen: fenA, elo: 1200 })
+    const first = client.playSearch({ fen: fenA, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go '))).toBe(true))
 
     const drain = client.stopAndDrain()
@@ -414,7 +397,7 @@ describe('stockfishClient', () => {
     lastWorker!.setBestmove('bestmove d7d5')
 
     // New play waits on drain; orphan e7e5 (cancelled search) must only finish the drain.
-    const second = client.playSearch({ fen: fenB, elo: 1200 })
+    const second = client.playSearch({ fen: fenB, skill: 20, depth: 3 })
     lastWorker!.emit('bestmove e7e5')
     await drain
 
@@ -452,7 +435,7 @@ describe('stockfishClient', () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
 
-    const playPromise = client.playSearch({ fen, elo: 1200 })
+    const playPromise = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go '))).toBe(true))
 
     const drain = client.stopAndDrain()
@@ -494,7 +477,7 @@ describe('stockfishClient', () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
 
-    const first = client.playSearch({ fen, elo: 1200 })
+    const first = client.playSearch({ fen, skill: 20, depth: 3 })
     await vi.waitFor(() => expect(lastWorker?.commands.some((c) => c.startsWith('go '))).toBe(true))
 
     client.stop()
@@ -503,7 +486,7 @@ describe('stockfishClient', () => {
 
     lastWorker!.goLatch = null
     lastWorker!.setBestmove('bestmove d7d5')
-    const second = client.playSearch({ fen, elo: 1200 })
+    const second = client.playSearch({ fen, skill: 20, depth: 3 })
 
     const stopIdx = lastWorker!.commands.indexOf('stop')
     await second
@@ -529,7 +512,7 @@ describe('stockfishClient', () => {
     const client = getEngineClient()
     const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
 
-    await client.playSearch({ fen, elo: 500 })
+    await client.playSearch({ fen, skill: 20, depth: 1 })
     expect(lastWorker!.commands.some((c) => c.startsWith('go depth'))).toBe(true)
 
     const evalScore = await client.evalSearch({ fen })

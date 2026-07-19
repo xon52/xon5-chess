@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import { DIFFICULTY_PRESETS } from '@/game/difficulty'
+</script>
+
 <template>
   <main class="page">
     <h1 class="page__title">About</h1>
@@ -14,6 +18,43 @@
         I’m a software developer who loves to build things. After paying off my house, I decided I
         don’t need to keep chasing that money — free, simple apps like this are how I give back.
       </p>
+
+      <h2 class="page__subtitle">How it works</h2>
+      <p>
+        The opponent is Stockfish configured with two controls:
+        <strong>Skill Level</strong> (how readily it blunders) and fixed
+        <strong>Depth</strong> (how far it can see). Play searches use those settings only — not
+        time-based Elo limiting. Evaluation for the win% graph stays uncapped so strength limiting
+        does not poison the displayed score.
+      </p>
+      <p>
+        When configuring lower settings, remember that Skill Level changes how it blunders, while
+        Depth changes what it can see. Stockfish’s built-in Skill Level only shuffles among
+        otherwise strong candidate moves — it will still take free pieces. At Skill 0, xon5-chess
+        therefore skips Stockfish entirely and picks beginner moves that often hang pieces and miss
+        free captures (the next band starts taking free pieces again).
+      </p>
+
+      <div class="page__table-wrap" role="region" aria-label="Difficulty bands">
+        <table class="page__table">
+          <thead>
+            <tr>
+              <th scope="col">Skill</th>
+              <th scope="col">Depth</th>
+              <th scope="col">Estimated Elo</th>
+              <th scope="col">Profile</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="band in DIFFICULTY_PRESETS" :key="band.id">
+              <td>{{ band.skillDisplay }}</td>
+              <td>{{ band.depthDisplay }}</td>
+              <td>{{ band.eloDisplay }}</td>
+              <td>{{ band.profile }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </main>
 </template>
@@ -36,8 +77,16 @@
   color: var(--color-ivory);
 }
 
+.page__subtitle {
+  margin: 0.75rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--color-ivory);
+}
+
 .page__prose {
-  max-width: 36rem;
+  max-width: 42rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -53,5 +102,42 @@
 .page__prose strong {
   color: var(--color-ivory);
   font-weight: 600;
+}
+
+.page__table-wrap {
+  overflow-x: auto;
+  margin-top: 0.25rem;
+}
+
+.page__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--color-ivory-muted);
+}
+
+.page__table th,
+.page__table td {
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid rgb(232 220 200 / 0.18);
+  vertical-align: top;
+}
+
+.page__table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-ivory);
+  white-space: nowrap;
+}
+
+.page__table td:nth-child(1),
+.page__table td:nth-child(2),
+.page__table td:nth-child(3) {
+  white-space: nowrap;
+  color: var(--color-ivory);
 }
 </style>

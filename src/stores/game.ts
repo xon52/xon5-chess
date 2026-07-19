@@ -10,17 +10,25 @@ import {
   getLastMove,
   isPromotionMove as chessIsPromotionMove,
 } from '@/game/board'
-import { ELO_DEFAULT, snapElo } from '@/game/elo'
+import {
+  DEFAULT_DIFFICULTY_ID,
+  getDifficulty,
+  resolveDifficultyId,
+  type DifficultyId,
+} from '@/game/difficulty'
+import {
+  hasStoredPrefs,
+  loadPrefs,
+  saveActiveColor,
+  saveDifficulty,
+  seedDefaultPrefs,
+  type ActiveColor,
+} from '@/game/prefs'
 import { deriveStatus, type GameStatus } from '@/game/status'
 
 export type { GameStatus } from '@/game/status'
-export {
-  ELO_DEFAULT,
-  ELO_MAX,
-  ELO_MIN,
-  ELO_STEP,
-  snapElo,
-} from '@/game/elo'
+export type { DifficultyId } from '@/game/difficulty'
+export type { ActiveColor } from '@/game/prefs'
 
 export type TryMoveInput = {
   from: Square | string
@@ -30,25 +38,20 @@ export type TryMoveInput = {
 
 export type TryMoveResult = { ok: true; san: string } | { ok: false }
 
-export type NewGameOpts = {
-  color: 'w' | 'b'
-  elo: number
-}
-
 export const useGameStore = defineStore('game', () => {
+  const prefs = loadPrefs()
   const chess = new Chess()
 
   const fen = ref(chess.fen())
   const turn = ref<Color>(chess.turn())
   const history = ref<string[]>([])
   const status = ref<GameStatus>({ kind: 'playing' })
-  /** Null until New Game chooses a color (start gate). */
+  /** Null until Start begins a session (start gate). */
   const humanColor = ref<'w' | 'b' | null>(null)
-  /**
-   * Play-strength Elo for the current / last New Game (M7 play searches).
-   * Kept across resign/reset so the next chooser can default to it; UI hides it when cleared.
-   */
-  const elo = ref(ELO_DEFAULT)
+  /** Side the human plays / board bottom; persisted across sessions. */
+  const activeColor = ref<ActiveColor>(prefs.activeColor)
+  /** Play-strength band id; persisted; kept across resign/reset. */
+  const difficultyId = ref<DifficultyId>(prefs.difficultyId)
   /** True while a play search is in flight. */
   const engineThinking = ref(false)
   /**
@@ -69,6 +72,8 @@ export const useGameStore = defineStore('game', () => {
   const blackWinPct = computed(() =>
     whiteWinPct.value === null ? null : 100 - whiteWinPct.value,
   )
+
+  const difficulty = computed(() => getDifficulty(difficultyId.value))
 
   /** Completed eval points for the live graph (ply ≤ current history length). */
   const evalSeries = computed(() => {
@@ -129,7 +134,7 @@ export const useGameStore = defineStore('game', () => {
   const canRequestEvalSearch = (): boolean =>
     humanColor.value !== null && history.value.length >= 2 && !engineThinking.value
 
-  /** Start a 500ms eval search on the current position (not Elo-capped). */
+  /** Start a 500ms eval search on the current position (not strength-capped). */
   const requestEvalSearch = () => {
     if (!canRequestEvalSearch()) {
       return
@@ -163,7 +168,7 @@ export const useGameStore = defineStore('game', () => {
       turn.value === humanColor.value,
   )
 
-  const orientation = computed(() => (humanColor.value === 'b' ? 'black' : 'white'))
+  const orientation = computed(() => (activeColor.value === 'b' ? 'black' : 'white'))
 
   /** Legal move destinations for chessground; empty when locked or over. */
   const legalDests = computed(() => {
@@ -200,10 +205,10 @@ export const useGameStore = defineStore('game', () => {
     bumpEvalSearchGeneration()
     engineThinking.value = true
     const positionFen = fen.value
-    const strength = elo.value
+    const { playSkill, playDepth } = getDifficulty(difficultyId.value)
 
     void getEngineClient()
-      .playSearch({ fen: positionFen, elo: strength })
+      .playSearch({ fen: positionFen, skill: playSkill, depth: playDepth })
       .then((move) => {
         if (generation !== playSearchGeneration) {
           return
@@ -281,7 +286,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Apply a legal move on the engine’s turn (tests + M7 Stockfish replies).
+   * Apply a legal move on the engine’s turn (tests + Stockfish replies).
    * Rejects when no color is chosen or it is the human’s turn.
    */
   const applyEngineMove = (input: TryMoveInput): TryMoveResult => {
@@ -344,7 +349,42 @@ export const useGameStore = defineStore('game', () => {
     return turn.value === color
   }
 
-  /** Back to start gate: starting position, no human color. Keeps last elo for the next chooser. */
+  const setDifficultyId = (id: DifficultyId | string) => {
+    const next = resolveDifficultyId(id)
+    difficultyId.value = next
+    saveDifficulty(next)
+  }
+
+  /**
+   * Flip board / side. No-op when the game is over (mate/draw).
+   * Mid-game: updates humanColor to match; cancels in-flight play and may request an engine move.
+   */
+  const flipBoard = () => {
+    if (humanColor.value !== null && status.value.kind !== 'playing') {
+      return
+    }
+
+    const next: ActiveColor = activeColor.value === 'w' ? 'b' : 'w'
+    activeColor.value = next
+    saveActiveColor(next)
+
+    if (humanColor.value !== null) {
+      humanColor.value = next
+      if (status.value.kind === 'playing') {
+        void invalidatePlaySearch().then(() => {
+          if (
+            humanColor.value === next &&
+            status.value.kind === 'playing' &&
+            !isHumanTurn.value
+          ) {
+            requestEngineMove()
+          }
+        })
+      }
+    }
+  }
+
+  /** Back to start gate: starting position, no human session. Keeps difficulty + activeColor. */
   const reset = () => {
     void invalidatePlaySearch()
     bumpEvalSearchGeneration()
@@ -354,13 +394,13 @@ export const useGameStore = defineStore('game', () => {
     syncFromChess()
   }
 
-  const newGame = (opts: NewGameOpts) => {
+  /** Start a game as activeColor with the current difficulty band. */
+  const newGame = () => {
     const drain = invalidatePlaySearch()
     bumpEvalSearchGeneration()
     clearEvalHistory()
     chess.reset()
-    humanColor.value = opts.color
-    elo.value = snapElo(opts.elo)
+    humanColor.value = activeColor.value
     syncFromChess()
     // ucinewgame only after stop bestmove is drained (§5 / UCI).
     void drain.then(() => {
@@ -369,6 +409,24 @@ export const useGameStore = defineStore('game', () => {
         requestEngineMove()
       }
     })
+  }
+
+  /**
+   * First Play visit with no persisted prefs: seed defaults (lowest / White) and start a game.
+   * Returns true when a game was auto-started.
+   */
+  const startFirstVisitIfNeeded = (): boolean => {
+    if (hasStoredPrefs()) {
+      return false
+    }
+    activeColor.value = 'w'
+    difficultyId.value = DEFAULT_DIFFICULTY_ID
+    seedDefaultPrefs()
+    if (humanColor.value === null) {
+      newGame()
+      return true
+    }
+    return false
   }
 
   /** Load a FEN position (for tests and later tooling). Returns false if invalid. */
@@ -388,7 +446,9 @@ export const useGameStore = defineStore('game', () => {
     history,
     status,
     humanColor,
-    elo,
+    activeColor,
+    difficultyId,
+    difficulty,
     engineThinking,
     whiteWinPct,
     blackWinPct,
@@ -404,8 +464,11 @@ export const useGameStore = defineStore('game', () => {
     undoPly,
     undoPlies,
     undoUntilHumanTurn,
+    setDifficultyId,
+    flipBoard,
     reset,
     newGame,
+    startFirstVisitIfNeeded,
     loadFen,
     requestEngineMove,
     requestEvalSearch,

@@ -4,24 +4,18 @@ import stockfishWasmUrl from 'stockfish/bin/stockfish-18-lite-single.wasm?url'
 import {
   parseBestMoveLine,
   parseInfoScore,
-  parseUciEloRange,
-  parseUciOptionName,
   planEvalSearch,
   planPlaySearch,
-  type UciEloRange,
   type UciMove,
   type UciScore,
 } from '@/engine/uci'
+import { maybeWeakenMove, skipsEngineSearch, pickBeginnerMove } from '@/engine/weaken'
 
-/** Preferred play budget when UCI_LimitStrength is available (not reused for M8 eval).
- * Product choice for play; SPEC §5 only pins eval at `go movetime 500` (M8). */
-export const PLAY_MOVETIME_MS = 1000
-
-/** Eval search budget (SPEC §5). Not Elo-capped. */
+/** Eval search budget (SPEC §5). Not strength-capped. */
 export const EVAL_MOVETIME_MS = 500
 
 export type EngineClient = {
-  playSearch(opts: { fen: string; elo: number }): Promise<UciMove | null>
+  playSearch(opts: { fen: string; skill: number; depth: number }): Promise<UciMove | null>
   evalSearch(opts: { fen: string }): Promise<UciScore | null>
   notifyNewGame(): void
   /** Fire-and-forget cancel; may leave the worker draining. Prefer stopAndDrain when resuming. */
@@ -55,8 +49,6 @@ const createStockfishWorker = (): Worker => {
 const createDefaultClient = (): EngineClient => {
   let worker: Worker | null = null
   let ready: Promise<void> | null = null
-  const optionNames = new Set<string>()
-  let uciEloRange: UciEloRange | null = null
   let job: SearchJob = 'idle'
   let searchSeq = 0
   let pendingPlay: PendingPlay | null = null
@@ -109,15 +101,6 @@ const createDefaultClient = (): EngineClient => {
     const trimmed = line.trim()
     if (!trimmed) {
       return
-    }
-
-    const option = parseUciOptionName(trimmed)
-    if (option) {
-      optionNames.add(option)
-    }
-    const eloRange = parseUciEloRange(trimmed)
-    if (eloRange) {
-      uciEloRange = eloRange
     }
 
     if (job === 'eval' && pendingEval) {
@@ -271,8 +254,23 @@ const createDefaultClient = (): EngineClient => {
 
   const playSearch = async (opts: {
     fen: string
-    elo: number
+    skill: number
+    depth: number
   }): Promise<UciMove | null> => {
+    // True beginners never call Stockfish — Skill Level still takes free pieces.
+    if (skipsEngineSearch(opts.skill)) {
+      if (job === 'play') {
+        return null
+      }
+      if (job === 'eval' || job === 'draining') {
+        await stopCurrentSearch()
+      }
+      if (job !== 'idle') {
+        return null
+      }
+      return pickBeginnerMove(opts.fen, opts.depth)
+    }
+
     await ensureReady()
 
     if (job === 'eval' || job === 'draining') {
@@ -288,12 +286,20 @@ const createDefaultClient = (): EngineClient => {
 
     const seq = ++searchSeq
     job = 'play'
-    const plan = planPlaySearch(opts.elo, optionNames, uciEloRange, PLAY_MOVETIME_MS)
+    const plan = planPlaySearch({ skill: opts.skill, depth: opts.depth })
     sendPlan(plan)
     send(`position fen ${opts.fen}`)
 
     return new Promise<UciMove | null>((resolve) => {
-      pendingPlay = { seq, resolve }
+      pendingPlay = {
+        seq,
+        resolve: (move) => {
+          // Do not invent a move when the search was cancelled (null).
+          resolve(
+            move ? maybeWeakenMove(opts.fen, opts.skill, opts.depth, move) : null,
+          )
+        },
+      }
       send(plan.go)
     })
   }

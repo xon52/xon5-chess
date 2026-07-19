@@ -26,6 +26,7 @@ const installEngineMock = (partial: Partial<EngineClient> = {}) => {
 
 describe('useGameStore', () => {
   beforeEach(() => {
+    localStorage.clear()
     setActivePinia(createPinia())
     installEngineMock()
   })
@@ -41,7 +42,14 @@ describe('useGameStore', () => {
   })
 
   const startAsWhite = (store = useGameStore()) => {
-    store.newGame({ color: 'w', elo: 1200 })
+    store.activeColor = 'w'
+    store.newGame()
+    return store
+  }
+
+  const startAsBlack = (store = useGameStore()) => {
+    store.activeColor = 'b'
+    store.newGame()
     return store
   }
 
@@ -79,30 +87,34 @@ describe('useGameStore', () => {
 
   it('newGame as White unlocks the human turn', () => {
     const store = useGameStore()
-    store.newGame({ color: 'w', elo: 1200 })
+    store.activeColor = 'w'
+    store.newGame()
 
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.humanColor).toBe('w')
-    expect(store.elo).toBe(1200)
+    expect(store.difficultyId).toBe('s0-d1')
     expect(store.isHumanTurn).toBe(true)
     expect(store.orientation).toBe('white')
     expect(store.history).toEqual([])
     expect(store.legalDests.get('e2')).toEqual(expect.arrayContaining(['e3', 'e4']))
   })
 
-  it('newGame stores snapped Elo for play strength', () => {
+  it('setDifficultyId persists across reset', () => {
     const store = useGameStore()
-    store.newGame({ color: 'w', elo: 1510 })
-    expect(store.elo).toBe(1500)
+    store.setDifficultyId('s4-d5')
+    store.activeColor = 'w'
+    store.newGame()
+    expect(store.difficultyId).toBe('s4-d5')
 
     store.reset()
     expect(store.humanColor).toBeNull()
-    expect(store.elo).toBe(1500)
+    expect(store.difficultyId).toBe('s4-d5')
   })
 
   it('newGame as Black locks the board on White to move', () => {
     const store = useGameStore()
-    store.newGame({ color: 'b', elo: 1200 })
+    store.activeColor = 'b'
+    store.newGame()
 
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.turn).toBe('w')
@@ -111,6 +123,41 @@ describe('useGameStore', () => {
     expect(store.orientation).toBe('black')
     expect(store.legalDests.size).toBe(0)
     expect(store.tryMove({ from: 'e2', to: 'e4' })).toEqual({ ok: false })
+  })
+
+  it('flipBoard toggles activeColor and mid-game humanColor', () => {
+    const store = startAsWhite()
+    store.flipBoard()
+    expect(store.activeColor).toBe('b')
+    expect(store.humanColor).toBe('b')
+    expect(store.orientation).toBe('black')
+  })
+
+  it('flipBoard is a no-op after checkmate', () => {
+    const store = startAsWhite()
+    playHumanThenEngine(store, { from: 'e2', to: 'e4' }, { from: 'e7', to: 'e5' })
+    playHumanThenEngine(store, { from: 'f1', to: 'c4' }, { from: 'b8', to: 'c6' })
+    playHumanThenEngine(store, { from: 'd1', to: 'h5' }, { from: 'g8', to: 'f6' })
+    expect(store.tryMove({ from: 'h5', to: 'f7' }).ok).toBe(true)
+    expect(store.status.kind).toBe('checkmate')
+
+    store.flipBoard()
+    expect(store.activeColor).toBe('w')
+    expect(store.humanColor).toBe('w')
+  })
+
+  it('startFirstVisitIfNeeded seeds prefs and starts White on empty storage', () => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    installEngineMock()
+    const store = useGameStore()
+
+    expect(store.startFirstVisitIfNeeded()).toBe(true)
+    expect(store.humanColor).toBe('w')
+    expect(store.difficultyId).toBe('s0-d1')
+    expect(localStorage.getItem('xon5.difficultyId')).toBe('s0-d1')
+    expect(localStorage.getItem('xon5.activeColor')).toBe('w')
+    expect(store.startFirstVisitIfNeeded()).toBe(false)
   })
 
   it('rejects Black tryMove after a White human ply', () => {
@@ -251,15 +298,16 @@ describe('useGameStore', () => {
     expect(store.status).toEqual({ kind: 'playing' })
   })
 
-  it('newGame with color replaces an in-progress game', () => {
+  it('newGame replaces an in-progress game', () => {
     const store = startAsWhite()
     store.tryMove({ from: 'd2', to: 'd4' })
-    store.newGame({ color: 'w', elo: 1500 })
+    store.setDifficultyId('s4-d5')
+    store.newGame()
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.turn).toBe('w')
     expect(store.history).toEqual([])
     expect(store.humanColor).toBe('w')
-    expect(store.elo).toBe(1500)
+    expect(store.difficultyId).toBe('s4-d5')
     expect(store.isHumanTurn).toBe(true)
   })
 
@@ -377,7 +425,8 @@ describe('useGameStore', () => {
 
     it('Black opening engine ply alone: canUndo false and no mutation', () => {
       const store = useGameStore()
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       expect(store.applyEngineMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
       const fen = store.fen
 
@@ -391,7 +440,8 @@ describe('useGameStore', () => {
 
     it('Black after human move undoes until Black to move', () => {
       const store = useGameStore()
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       expect(store.applyEngineMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
       expect(store.tryMove({ from: 'e7', to: 'e5' }).ok).toBe(true)
       expect(store.applyEngineMove({ from: 'g1', to: 'f3' }).ok).toBe(true)
@@ -405,7 +455,8 @@ describe('useGameStore', () => {
 
     it('Black-delivered mate undoes to Black turn and clears terminal', () => {
       const store = useGameStore()
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       // Fool's mate with human as Black.
       expect(store.applyEngineMove({ from: 'f2', to: 'f3' }).ok).toBe(true)
       expect(store.tryMove({ from: 'e7', to: 'e5' }).ok).toBe(true)
@@ -422,11 +473,11 @@ describe('useGameStore', () => {
   })
 
   describe('M7 engine play search', () => {
-    it('tryMove triggers playSearch with current FEN and store Elo', async () => {
+    it('tryMove triggers playSearch with current FEN and difficulty skill/depth', async () => {
       const playSearch = vi.fn(async () => ({ from: 'e7', to: 'e5' }) satisfies UciMove)
       const mock = installEngineMock({ playSearch })
       const store = startAsWhite()
-      store.elo = 1500
+      store.setDifficultyId('s4-d5')
 
       expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
       expect(store.engineThinking).toBe(true)
@@ -435,7 +486,8 @@ describe('useGameStore', () => {
 
       expect(playSearch).toHaveBeenCalledWith({
         fen: expect.stringContaining('4P3'),
-        elo: 1500,
+        skill: 4,
+        depth: 5,
       })
       expect(store.history).toEqual(['e4', 'e5'])
       expect(store.engineThinking).toBe(false)
@@ -447,7 +499,8 @@ describe('useGameStore', () => {
       installEngineMock({ playSearch })
       const store = useGameStore()
 
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       expect(store.isHumanTurn).toBe(false)
 
       await vi.waitFor(() => expect(store.isHumanTurn).toBe(true))
@@ -470,7 +523,8 @@ describe('useGameStore', () => {
       installEngineMock({ playSearch, stopAndDrain, notifyNewGame })
       const store = useGameStore()
 
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       expect(stopAndDrain).toHaveBeenCalled()
       expect(notifyNewGame).not.toHaveBeenCalled()
       expect(playSearch).not.toHaveBeenCalled()
@@ -612,7 +666,8 @@ describe('useGameStore', () => {
       installEngineMock({ playSearch, stopAndDrain })
       const store = useGameStore()
 
-      store.newGame({ color: 'b', elo: 1200 })
+      store.activeColor = 'b'
+      store.newGame()
       await vi.waitFor(() => expect(store.history).toEqual(['e4']))
       expect(store.isHumanTurn).toBe(true)
 

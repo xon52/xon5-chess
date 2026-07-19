@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  canUseLimitStrengthElo,
-  eloToSkillDepth,
   fenSideToMove,
   parseBestMoveLine,
   parseInfoScore,
-  parseUciEloRange,
   parseUciMove,
-  parseUciOptionName,
   planEvalSearch,
   planPlaySearch,
   scoreToWhiteBlackPct,
@@ -40,69 +36,20 @@ describe('uci helpers', () => {
     expect(parseBestMoveLine('info depth 12')).toBeNull()
   })
 
-  it('parses UCI option names', () => {
-    expect(parseUciOptionName('option name UCI_Elo type spin default 1320 min 1320 max 3190')).toBe(
-      'UCI_Elo',
-    )
-    expect(parseUciOptionName('option name Skill Level type spin default 20 min 0 max 20')).toBe(
-      'Skill Level',
-    )
-    expect(parseUciOptionName('uciok')).toBeNull()
-  })
-
-  it('parses UCI_Elo min/max spin range', () => {
-    expect(
-      parseUciEloRange('option name UCI_Elo type spin default 1320 min 1320 max 3190'),
-    ).toEqual({ min: 1320, max: 3190 })
-    expect(parseUciEloRange('option name Skill Level type spin default 20 min 0 max 20')).toBeNull()
-    expect(parseUciEloRange('option name UCI_Elo type spin default 1320')).toBeNull()
-  })
-
-  it('maps Elo to Skill + depth fallback table values', () => {
-    expect(eloToSkillDepth(500)).toEqual({ skill: 0, depth: 6 })
-    expect(eloToSkillDepth(1200)).toEqual({ skill: 9, depth: 11 })
-    expect(eloToSkillDepth(2000)).toEqual({ skill: 20, depth: 16 })
-  })
-
-  it('decides LimitStrength vs Skill+depth from options and Elo range', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo', 'Skill Level'])
-    const range = { min: 1320, max: 3190 }
-
-    expect(canUseLimitStrengthElo(1500, options, range)).toBe(true)
-    expect(canUseLimitStrengthElo(1200, options, range)).toBe(false)
-    expect(canUseLimitStrengthElo(500, options, range)).toBe(false)
-    expect(canUseLimitStrengthElo(1500, new Set(['Skill Level']), range)).toBe(false)
-    expect(canUseLimitStrengthElo(1500, options, null)).toBe(true)
-  })
-
-  it('plans LimitStrength play when Elo is in range', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo'])
-    expect(planPlaySearch(1500, options, { min: 1320, max: 3190 }, 1000)).toEqual({
-      setOptions: [
-        'setoption name UCI_LimitStrength value true',
-        'setoption name UCI_Elo value 1500',
-      ],
-      go: 'go movetime 1000',
-    })
-  })
-
-  it('plans Skill+depth play below UCI_Elo min (including default 1200)', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo', 'Skill Level'])
-    const range = { min: 1320, max: 3190 }
-
-    expect(planPlaySearch(1200, options, range, 1000)).toEqual({
-      setOptions: [
-        'setoption name UCI_LimitStrength value false',
-        'setoption name Skill Level value 9',
-      ],
-      go: 'go depth 11',
-    })
-    expect(planPlaySearch(500, options, range, 1000)).toEqual({
+  it('plans skill+depth play searches', () => {
+    expect(planPlaySearch({ skill: 0, depth: 1 })).toEqual({
       setOptions: [
         'setoption name UCI_LimitStrength value false',
         'setoption name Skill Level value 0',
       ],
-      go: 'go depth 6',
+      go: 'go depth 1',
+    })
+    expect(planPlaySearch({ skill: 8, depth: 8 })).toEqual({
+      setOptions: [
+        'setoption name UCI_LimitStrength value false',
+        'setoption name Skill Level value 8',
+      ],
+      go: 'go depth 9',
     })
   })
 
