@@ -3,19 +3,15 @@ import { defineStore } from 'pinia'
 import { Chess, type Color, type Square } from 'chess.js'
 
 import {
-  getEvalEngine,
-  getPlayEngine,
-  resolveConfigId,
-  resolveEngineId,
-} from '@/engines/registry'
-import type { EngineId } from '@/engines/types'
-import { fenSideToMove, scoreToWhiteBlackPct } from '@/engines/shared/uci'
-import {
-  analyzePlayedMove,
+  fenSideToMove,
+  getEngine,
   printFlairMatchStats,
+  recentMovesFromChess,
   recordFlairMove,
   resetFlairMatchLog,
-} from '@/engines/flair/log'
+  resolveDifficultyId,
+  scoreToWhiteBlackPct,
+} from '@/engine'
 import {
   buildLegalDests,
   canUndo as canUndoPlies,
@@ -23,12 +19,11 @@ import {
   isPromotionMove as chessIsPromotionMove,
 } from '@/game/board'
 import {
-  DEFAULT_CONFIG_ID,
-  DEFAULT_ENGINE_ID,
+  DEFAULT_DIFFICULTY_ID,
   hasStoredPrefs,
   loadPrefs,
   saveActiveColor,
-  saveEngineSelection,
+  saveDifficultyId,
   seedDefaultPrefs,
   type ActiveColor,
 } from '@/game/prefs'
@@ -36,7 +31,6 @@ import { deriveStatus, type GameStatus } from '@/game/status'
 
 export type { GameStatus } from '@/game/status'
 export type { ActiveColor } from '@/game/prefs'
-export type { EngineId } from '@/engines/types'
 
 export type TryMoveInput = {
   from: Square | string
@@ -56,8 +50,7 @@ export const useGameStore = defineStore('game', () => {
   const status = ref<GameStatus>({ kind: 'playing' })
   const humanColor = ref<'w' | 'b' | null>(null)
   const activeColor = ref<ActiveColor>(prefs.activeColor)
-  const engineId = ref<EngineId>(prefs.engineId)
-  const configId = ref<string>(prefs.configId)
+  const difficultyId = ref<string>(prefs.difficultyId)
   const engineThinking = ref(false)
   const whiteWinPct = ref<number | null>(null)
   const evalPctByHistoryLength = ref(new Map<number, number>())
@@ -111,12 +104,10 @@ export const useGameStore = defineStore('game', () => {
     status.value = deriveStatus(chess)
   }
 
-  const currentPlayEngine = () => getPlayEngine(engineId.value)
-
   const invalidatePlaySearch = (): Promise<void> => {
     playSearchGeneration++
     engineThinking.value = false
-    return currentPlayEngine().stopAndDrain()
+    return getEngine().stopAndDrain()
   }
 
   const canRequestEvalSearch = (): boolean =>
@@ -131,7 +122,7 @@ export const useGameStore = defineStore('game', () => {
     const positionFen = fen.value
     const sideToMove = fenSideToMove(positionFen)
 
-    void getEvalEngine()
+    void getEngine()
       .evalSearch({ fen: positionFen })
       .then((score) => {
         if (generation !== evalSearchGeneration) {
@@ -185,27 +176,12 @@ export const useGameStore = defineStore('game', () => {
     bumpEvalSearchGeneration()
     engineThinking.value = true
     const positionFen = fen.value
-    const play = currentPlayEngine()
-    const cfg = configId.value
-    const recentMoves = (
-      chess.history({ verbose: true }) as Array<{
-        from: string
-        to: string
-        promotion?: string
-      }>
-    )
-      .slice(-6)
-      .map((m) => ({
-        from: m.from,
-        to: m.to,
-        promotion:
-          m.promotion === 'q' || m.promotion === 'r' || m.promotion === 'b' || m.promotion === 'n'
-            ? m.promotion
-            : undefined,
-      }))
+    const engine = getEngine()
+    const difficulty = difficultyId.value
+    const recentMoves = recentMovesFromChess(chess)
 
-    void play
-      .playSearch({ fen: positionFen, configId: cfg, recentMoves })
+    void engine
+      .playSearch({ fen: positionFen, difficultyId: difficulty, recentMoves })
       .then((move) => {
         if (generation !== playSearchGeneration) {
           return
@@ -286,23 +262,20 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    if (engineId.value === 'flair') {
-      const move = {
-        from: String(input.from).toLowerCase(),
-        to: String(input.to).toLowerCase(),
-        promotion: input.promotion,
-      }
-      void analyzePlayedMove(fenBefore, move)
-        .then((analysis) => {
-          recordFlairMove({ side: 'human', ...analysis })
-        })
-        .catch((err) => {
-          console.error('[flair] human analyze failed', err)
-        })
-        .finally(afterHuman)
-    } else {
-      afterHuman()
+    const move = {
+      from: String(input.from).toLowerCase(),
+      to: String(input.to).toLowerCase(),
+      promotion: input.promotion,
     }
+    void getEngine()
+      .analyzeMove(fenBefore, move)
+      .then((analysis) => {
+        recordFlairMove({ side: 'human', ...analysis })
+      })
+      .catch((err) => {
+        console.error('[flair] human analyze failed', err)
+      })
+      .finally(afterHuman)
 
     return result
   }
@@ -370,38 +343,34 @@ export const useGameStore = defineStore('game', () => {
   }
 
   /**
-   * Switch play engine and/or config. Updates prefs immediately; drains the prior
-   * engine, then notifies the new one and may resume play on the engine's turn.
+   * Switch Flair difficulty. Updates prefs immediately; may resume play
+   * on the engine's turn after draining the current search.
    */
-  const setEngineSelection = (nextEngine: EngineId | string, nextConfig?: string) => {
-    const eng = resolveEngineId(nextEngine)
-    const cfg = resolveConfigId(eng, nextConfig ?? configId.value)
-    if (eng === engineId.value && cfg === configId.value) {
+  const setDifficultyId = (next: string) => {
+    const id = resolveDifficultyId(next)
+    if (id === difficultyId.value) {
       return
     }
 
-    const prev = getPlayEngine(engineId.value)
     playSearchGeneration++
     bumpEvalSearchGeneration()
     engineThinking.value = false
+    difficultyId.value = id
+    saveDifficultyId(id)
 
-    engineId.value = eng
-    configId.value = cfg
-    saveEngineSelection(eng, cfg)
+    void getEngine()
+      .stopAndDrain()
+      .then(() => {
+        getEngine().notifyNewGame()
 
-    void prev.stopAndDrain().then(() => {
-      const play = getPlayEngine(eng)
-      play.notifyNewGame()
-      getEvalEngine().notifyNewGame?.()
-
-      if (
-        humanColor.value !== null &&
-        status.value.kind === 'playing' &&
-        !isHumanTurn.value
-      ) {
-        requestEngineMove()
-      }
-    })
+        if (
+          humanColor.value !== null &&
+          status.value.kind === 'playing' &&
+          !isHumanTurn.value
+        ) {
+          requestEngineMove()
+        }
+      })
   }
 
   const flipBoard = () => {
@@ -448,8 +417,7 @@ export const useGameStore = defineStore('game', () => {
     humanColor.value = activeColor.value
     syncFromChess()
     void drain.then(() => {
-      currentPlayEngine().notifyNewGame()
-      getEvalEngine().notifyNewGame?.()
+      getEngine().notifyNewGame()
       if (!isHumanTurn.value && status.value.kind === 'playing') {
         requestEngineMove()
       }
@@ -461,8 +429,7 @@ export const useGameStore = defineStore('game', () => {
       return false
     }
     activeColor.value = 'w'
-    engineId.value = DEFAULT_ENGINE_ID
-    configId.value = DEFAULT_CONFIG_ID
+    difficultyId.value = DEFAULT_DIFFICULTY_ID
     seedDefaultPrefs()
     if (humanColor.value === null) {
       newGame()
@@ -488,8 +455,7 @@ export const useGameStore = defineStore('game', () => {
     status,
     humanColor,
     activeColor,
-    engineId,
-    configId,
+    difficultyId,
     engineThinking,
     whiteWinPct,
     blackWinPct,
@@ -505,7 +471,7 @@ export const useGameStore = defineStore('game', () => {
     undoPly,
     undoPlies,
     undoUntilHumanTurn,
-    setEngineSelection,
+    setDifficultyId,
     flipBoard,
     reset,
     newGame,

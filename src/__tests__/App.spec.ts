@@ -4,8 +4,8 @@ import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 
-import { resetEngineRegistry, setEvalEngine, setPlayEngine } from '@/engines/registry'
-import type { EvalEngine, PlayEngine } from '@/engines/types'
+import { resetEngine, setEngine } from '@/engine'
+import type { ChessEngine } from '@/engine/types'
 import App from '../App.vue'
 import HomeView from '../views/HomeView.vue'
 import PlayView from '../views/PlayView.vue'
@@ -18,21 +18,18 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const installEngineMock = () => {
   const stop = vi.fn()
-  const play: PlayEngine = {
-    id: 'stockfish',
+  const engine: ChessEngine = {
     playSearch: vi.fn(async () => null),
+    evalSearch: vi.fn(async () => null),
+    analyzeMove: vi.fn(async () => ({ quality: 'unclassified', move: '' })),
     notifyNewGame: vi.fn(),
     stop,
-    stopAndDrain: vi.fn(async () => { stop() }),
+    stopAndDrain: vi.fn(async () => {
+      stop()
+    }),
   }
-  const evalEng: EvalEngine = {
-    evalSearch: vi.fn(async () => null),
-    stop,
-    stopAndDrain: play.stopAndDrain,
-  }
-  setPlayEngine('stockfish', play)
-  setEvalEngine(evalEng)
-  return play
+  setEngine(engine)
+  return engine
 }
 
 describe('App', () => {
@@ -42,7 +39,7 @@ describe('App', () => {
   })
 
   afterEach(() => {
-    resetEngineRegistry()
+    resetEngine()
   })
 
   it('mounts the shell with nav and auto-starts first Play visit', async () => {
@@ -73,7 +70,7 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Resign')
     expect(wrapper.text()).toContain('Flip')
     expect(wrapper.text()).not.toContain('Ready to play')
-    expect(localStorage.getItem('xon5.configId')).toBe('level-1')
+    expect(localStorage.getItem('xon5.configId')).toBe('beginner')
     expect(localStorage.getItem('xon5.activeColor')).toBe('w')
   })
 })

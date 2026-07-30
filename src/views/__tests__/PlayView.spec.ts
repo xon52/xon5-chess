@@ -12,16 +12,12 @@ import { Chess, DEFAULT_POSITION } from 'chess.js'
 
 import ChessBoard from '@/components/ChessBoard.vue'
 
-import {
-  resetEngineRegistry,
-  setEvalEngine,
-  setPlayEngine,
-} from '@/engines/registry'
-import type { EvalEngine, PlayEngine } from '@/engines/types'
+import { resetEngine, setEngine } from '@/engine'
+import type { ChessEngine } from '@/engine/types'
 
-import type { UciMove } from '@/engines/shared/uci'
+import type { UciMove } from '@/engine/uci'
 
-import { saveActiveColor, saveEngineSelection } from '@/game/prefs'
+import { saveActiveColor, saveDifficultyId } from '@/game/prefs'
 
 import { useGameStore } from '@/stores/game'
 
@@ -67,30 +63,28 @@ const legalReply = (fen: string): UciMove | null => {
 
 const installPlayEngineMock = () => {
   const stop = vi.fn()
-  const play: PlayEngine = {
-    id: 'stockfish',
+  const engine: ChessEngine = {
     playSearch: vi.fn(async ({ fen }) => legalReply(fen)),
+    evalSearch: vi.fn(async () => null),
+    analyzeMove: vi.fn(async () => ({ quality: 'unclassified', move: '' })),
     notifyNewGame: vi.fn(),
     stop,
     stopAndDrain: vi.fn(async () => { stop() }),
   }
-  const evalEng: EvalEngine = {
-    evalSearch: vi.fn(async () => null),
-    stop,
-    stopAndDrain: play.stopAndDrain,
-  }
-  setPlayEngine('stockfish', play)
-  setEvalEngine(evalEng)
-  return play
+  setEngine(engine)
+  return engine
 }
 
 
 
-const engineClient = (partial: Partial<PlayEngine & { evalSearch?: EvalEngine['evalSearch'] }> = {}): PlayEngine => {
+const engineClient = (partial: Partial<ChessEngine> = {}): ChessEngine => {
   const stop = (partial.stop as any) ?? vi.fn()
-  const play: PlayEngine = {
-    id: 'stockfish',
+  const engine: ChessEngine = {
     playSearch: (partial.playSearch as any) ?? vi.fn(async ({ fen }) => legalReply(fen)),
+    evalSearch: (partial.evalSearch as any) ?? vi.fn(async () => null),
+    analyzeMove:
+      (partial.analyzeMove as any) ??
+      vi.fn(async () => ({ quality: 'unclassified', move: '' })),
     notifyNewGame: (partial.notifyNewGame as any) ?? vi.fn(),
     stop,
     stopAndDrain:
@@ -99,14 +93,8 @@ const engineClient = (partial: Partial<PlayEngine & { evalSearch?: EvalEngine['e
         stop()
       }),
   }
-  const evalEng: EvalEngine = {
-    evalSearch: (partial.evalSearch as any) ?? vi.fn(async () => null),
-    stop,
-    stopAndDrain: play.stopAndDrain,
-  }
-  setPlayEngine('stockfish', play)
-  setEvalEngine(evalEng)
-  return play
+  setEngine(engine)
+  return engine
 }
 
 
@@ -119,7 +107,7 @@ describe('PlayView', () => {
 
     // Seed prefs so PlayView does not auto-start a first-visit game.
 
-    saveEngineSelection('stockfish', 'level-1')
+    saveDifficultyId('beginner')
 
     saveActiveColor('w')
 
@@ -133,7 +121,8 @@ describe('PlayView', () => {
 
   afterEach(() => {
 
-    resetEngineRegistry()
+    resetEngine()
+    
 
   })
 
@@ -233,9 +222,7 @@ describe('PlayView', () => {
 
       expect(wrapper.text()).toContain('Flip')
 
-      expect(wrapper.text()).toContain('Engine')
-
-      expect(wrapper.text()).toContain('Config')
+      expect(wrapper.text()).toContain('Difficulty')
 
       expect(wrapper.text()).not.toContain('Resign')
 
@@ -245,7 +232,7 @@ describe('PlayView', () => {
 
       expect(wrapper.find('.play__history').exists()).toBe(false)
 
-      expect(wrapper.findAll('.play__difficulty-select')).toHaveLength(2)
+      expect(wrapper.findAll('.play__difficulty-select')).toHaveLength(1)
 
     })
 
@@ -291,7 +278,7 @@ describe('PlayView', () => {
 
       expect(store.humanColor).toBe('w')
 
-      expect(store.configId).toBe('level-1')
+      expect(store.difficultyId).toBe('beginner')
 
       expect(store.isHumanTurn).toBe(true)
 
@@ -319,23 +306,19 @@ describe('PlayView', () => {
 
 
 
-    it('config select updates store band on the fly', async () => {
+    it('difficulty select updates store config on the fly', async () => {
 
       const { wrapper, store } = mountPlay()
 
-      const selects = wrapper.findAll('.play__difficulty-select')
+      const configSelect = wrapper.find('.play__difficulty-select')
 
-      const configSelect = selects[1]!
-
-      await configSelect.setValue('level-5')
+      await configSelect.setValue('solid')
 
       await nextTick()
 
 
 
-      expect(store.engineId).toBe('stockfish')
-
-      expect(store.configId).toBe('level-5')
+      expect(store.difficultyId).toBe('solid')
 
       expect(configSelect.text()).toContain('Solid')
 
@@ -359,11 +342,11 @@ describe('PlayView', () => {
 
       expect(store.activeColor).toBe('w')
 
-      expect(store.configId).toBe('level-1')
+      expect(store.difficultyId).toBe('beginner')
 
       expect(store.isHumanTurn).toBe(true)
 
-      expect(localStorage.getItem('xon5.configId')).toBe('level-1')
+      expect(localStorage.getItem('xon5.configId')).toBe('beginner')
 
       expect(localStorage.getItem('xon5.activeColor')).toBe('w')
 

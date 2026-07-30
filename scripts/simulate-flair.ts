@@ -10,16 +10,14 @@
  * Exits non-zero if any adjacent pair's lower-wins rate exceeds --max-upset
  * (default 0.35). Draws do not count as upsets.
  */
-import { Chess, type Square } from 'chess.js'
+import { Chess } from 'chess.js'
 import { afterAll, beforeAll, test } from 'vitest'
 
-import { createFlairPlayEngine } from '../src/engines/flair/client'
-import { FLAIR_CONFIGS } from '../src/engines/flair/configs'
-import { resetFlairMatchLog } from '../src/engines/flair/log'
-import type { UciMove } from '../src/engines/shared/uci'
-import { setStockfishInternal } from '../src/engines/stockfish/client'
-import type { PlayEngine } from '../src/engines/types'
-import { createNodeStockfishInternal } from './nodeStockfishInternal'
+import { createChessEngine, recentMovesFromChess } from '../src/engine/createChessEngine'
+import { FLAIR_CONFIGS } from '../src/engine/flair/configs'
+import { resetFlairMatchLog } from '../src/engine/flair/log'
+import { createNodeStockfishBackend } from '../src/engine/stockfish/node'
+import type { ChessEngine } from '../src/engine/types'
 
 type Result = '1-0' | '0-1' | '1/2-1/2'
 
@@ -84,26 +82,8 @@ const parsePairs = (): Array<{ lowerId: string; higherId: string }> => {
   })
 }
 
-const recentFromHistory = (chess: Chess): UciMove[] =>
-  (
-    chess.history({ verbose: true }) as Array<{
-      from: Square
-      to: Square
-      promotion?: string
-    }>
-  )
-    .slice(-6)
-    .map((m) => ({
-      from: m.from,
-      to: m.to,
-      promotion:
-        m.promotion === 'q' || m.promotion === 'r' || m.promotion === 'b' || m.promotion === 'n'
-          ? m.promotion
-          : undefined,
-    }))
-
 const playGame = async (
-  engine: PlayEngine,
+  engine: ChessEngine,
   whiteId: string,
   blackId: string,
 ): Promise<Result> => {
@@ -113,14 +93,16 @@ const playGame = async (
 
   let plies = 0
   while (!chess.isGameOver() && plies < MAX_PLIES) {
-    const configId = chess.turn() === 'w' ? whiteId : blackId
+    const difficultyId = chess.turn() === 'w' ? whiteId : blackId
     const move = await engine.playSearch({
       fen: chess.fen(),
-      configId,
-      recentMoves: recentFromHistory(chess),
+      difficultyId,
+      recentMoves: recentMovesFromChess(chess),
     })
     if (!move) {
-      throw new Error(`Engine returned null at ply ${plies} (${configId}) fen=${chess.fen()}`)
+      throw new Error(
+        `Engine returned null at ply ${plies} (${difficultyId}) fen=${chess.fen()}`,
+      )
     }
     const played = chess.move({
       from: move.from,
@@ -148,7 +130,7 @@ const say = (msg: string) => {
   process.stdout.write(`${msg}\n`)
 }
 
-let engine: PlayEngine
+let engine: ChessEngine
 let restoreLog: (() => void) | undefined
 
 beforeAll(async () => {
@@ -163,14 +145,12 @@ beforeAll(async () => {
     console.log = realLog
   }
 
-  const sf = await createNodeStockfishInternal()
-  setStockfishInternal(sf)
-  engine = createFlairPlayEngine()
+  const backend = await createNodeStockfishBackend()
+  engine = createChessEngine(backend)
 }, 120_000)
 
 afterAll(async () => {
   await engine?.stopAndDrain()
-  setStockfishInternal(null)
   restoreLog?.()
 })
 

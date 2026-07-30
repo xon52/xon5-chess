@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ENGINE_CATALOG } from '@/engines/registry'
-import { STOCKFISH_CONFIGS } from '@/engines/stockfish/configs'
+import { DIFFICULTY_OPTIONS } from '@/engine'
 </script>
 
 <template>
@@ -20,43 +19,20 @@ import { STOCKFISH_CONFIGS } from '@/engines/stockfish/configs'
         don’t need to keep chasing that money — free, simple apps like this are how I give back.
       </p>
 
-      <h2 class="page__subtitle">Engines</h2>
+      <h2 class="page__subtitle">Engine</h2>
       <p>
-        Pick an <strong>engine</strong> and a <strong>config</strong> for that engine. Win%
-        evaluation always uses full-strength Stockfish so the graph is not poisoned by weaker play
-        settings.
+        Play uses <strong>Flair</strong>, a Stockfish-backed opponent that samples human-like move
+        qualities (brilliant through blunder) instead of raw engine best moves. Pick a difficulty
+        from Beginner to Grandmaster. Win% evaluation always uses full-strength Stockfish so the
+        graph is not poisoned by weaker play settings.
       </p>
+
+      <h2 class="page__subtitle">Difficulty levels</h2>
       <ul>
-        <li v-for="eng in ENGINE_CATALOG" :key="eng.id">
-          <strong>{{ eng.label }}</strong> — {{ eng.configs.length }} config(s)
+        <li v-for="opt in DIFFICULTY_OPTIONS" :key="opt.id">
+          <strong>{{ opt.label }}</strong>
         </li>
       </ul>
-
-      <h2 class="page__subtitle">Stockfish levels</h2>
-      <div class="page__table-wrap" role="region" aria-label="Stockfish configs">
-        <table class="page__table">
-          <thead>
-            <tr>
-              <th scope="col">Config</th>
-              <th scope="col">Skill</th>
-              <th scope="col">Depth</th>
-              <th scope="col">Profile</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="band in STOCKFISH_CONFIGS" :key="band.id">
-              <td>{{ band.label }}</td>
-              <td>{{ band.playSkill }}</td>
-              <td>{{ band.playDepth }}</td>
-              <td>{{ band.profile }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p>
-        Maia needs ONNX weights fetched once with <code>pnpm fetch:maia</code> before that engine
-        can play.
-      </p>
     </div>
   </main>
 </template>
@@ -110,47 +86,5 @@ import { STOCKFISH_CONFIGS } from '@/engines/stockfish/configs'
 .page__prose strong {
   color: var(--color-ivory);
   font-weight: 600;
-}
-
-.page__prose code {
-  font-size: 0.9em;
-  color: var(--color-ivory);
-}
-
-.page__table-wrap {
-  overflow-x: auto;
-  margin-top: 0.25rem;
-}
-
-.page__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  color: var(--color-ivory-muted);
-}
-
-.page__table th,
-.page__table td {
-  padding: 0.55rem 0.65rem;
-  text-align: left;
-  border-bottom: 1px solid rgb(232 220 200 / 0.18);
-  vertical-align: top;
-}
-
-.page__table th {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-ivory);
-  white-space: nowrap;
-}
-
-.page__table td:nth-child(1),
-.page__table td:nth-child(2),
-.page__table td:nth-child(3) {
-  white-space: nowrap;
-  color: var(--color-ivory);
 }
 </style>

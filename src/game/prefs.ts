@@ -1,13 +1,10 @@
 import {
-  DEFAULT_CONFIG_ID,
-  DEFAULT_ENGINE_ID,
-  resolveConfigId,
-  resolveEngineId,
-} from '@/engines/registry'
-import type { EngineId } from '@/engines/types'
-import { resolveStockfishConfigId } from '@/engines/stockfish/configs'
+  DEFAULT_DIFFICULTY_ID,
+  resolveDifficultyId,
+} from '@/engine'
 
 const ENGINE_KEY = 'xon5.engineId'
+/** Persisted difficulty; key kept as configId for migration compatibility. */
 const CONFIG_KEY = 'xon5.configId'
 const DIFFICULTY_KEY = 'xon5.difficultyId'
 const ACTIVE_COLOR_KEY = 'xon5.activeColor'
@@ -15,8 +12,7 @@ const ACTIVE_COLOR_KEY = 'xon5.activeColor'
 export type ActiveColor = 'w' | 'b'
 
 export type Prefs = {
-  engineId: EngineId
-  configId: string
+  difficultyId: string
   activeColor: ActiveColor
 }
 
@@ -53,7 +49,7 @@ const writeItem = (key: string, value: string) => {
 const resolveActiveColor = (raw: unknown): ActiveColor =>
   raw === 'b' ? 'b' : 'w'
 
-/** True when the user has ever persisted engine/config/difficulty or side. */
+/** True when the user has ever persisted config/difficulty/engine or side. */
 export const hasStoredPrefs = (): boolean =>
   readItem(ENGINE_KEY) !== null ||
   readItem(CONFIG_KEY) !== null ||
@@ -61,47 +57,39 @@ export const hasStoredPrefs = (): boolean =>
   readItem(ACTIVE_COLOR_KEY) !== null
 
 export const loadPrefs = (): Prefs => {
-  const storedEngine = readItem(ENGINE_KEY)
   const storedConfig = readItem(CONFIG_KEY)
   const legacyDifficulty = readItem(DIFFICULTY_KEY)
 
-  // Migrate pre-multi-engine difficultyId → stockfish + config.
-  if (!storedEngine && legacyDifficulty) {
-    const engineId: EngineId = 'stockfish'
-    const configId = resolveStockfishConfigId(legacyDifficulty)
-    writeItem(ENGINE_KEY, engineId)
-    writeItem(CONFIG_KEY, configId)
-    return {
-      engineId,
-      configId,
-      activeColor: resolveActiveColor(readItem(ACTIVE_COLOR_KEY)),
+  let difficultyId = DEFAULT_DIFFICULTY_ID
+  if (storedConfig !== null) {
+    difficultyId = resolveDifficultyId(storedConfig)
+    if (difficultyId !== storedConfig) {
+      writeItem(CONFIG_KEY, difficultyId)
     }
+  } else if (legacyDifficulty !== null) {
+    // Pre-Flair difficulty ids are not Flair configs → beginner.
+    difficultyId = resolveDifficultyId(legacyDifficulty)
+    writeItem(CONFIG_KEY, difficultyId)
   }
 
-  const engineId = resolveEngineId(storedEngine)
-  const configId = resolveConfigId(engineId, storedConfig)
   return {
-    engineId,
-    configId,
+    difficultyId,
     activeColor: resolveActiveColor(readItem(ACTIVE_COLOR_KEY)),
   }
 }
 
-export const saveEngineSelection = (engineId: EngineId, configId: string) => {
-  const eng = resolveEngineId(engineId)
-  const cfg = resolveConfigId(eng, configId)
-  writeItem(ENGINE_KEY, eng)
-  writeItem(CONFIG_KEY, cfg)
+export const saveDifficultyId = (difficultyId: string) => {
+  writeItem(CONFIG_KEY, resolveDifficultyId(difficultyId))
 }
 
 export const saveActiveColor = (color: ActiveColor) => {
   writeItem(ACTIVE_COLOR_KEY, resolveActiveColor(color))
 }
 
-/** Persist product defaults (Stockfish beginner, White) for a first visit. */
+/** Persist product defaults (Flair beginner, White) for a first visit. */
 export const seedDefaultPrefs = () => {
-  saveEngineSelection(DEFAULT_ENGINE_ID, DEFAULT_CONFIG_ID)
+  saveDifficultyId(DEFAULT_DIFFICULTY_ID)
   saveActiveColor('w')
 }
 
-export { DEFAULT_ENGINE_ID, DEFAULT_CONFIG_ID }
+export { DEFAULT_DIFFICULTY_ID }

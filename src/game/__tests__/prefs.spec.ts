@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_CONFIG_ID, DEFAULT_ENGINE_ID } from '@/engines/registry'
+import { DEFAULT_DIFFICULTY_ID } from '@/engine'
 import {
   hasStoredPrefs,
   loadPrefs,
   saveActiveColor,
-  saveEngineSelection,
+  saveDifficultyId,
   seedDefaultPrefs,
 } from '@/game/prefs'
 
@@ -18,48 +18,43 @@ describe('prefs', () => {
     localStorage.clear()
     expect(hasStoredPrefs()).toBe(false)
     expect(loadPrefs()).toEqual({
-      engineId: DEFAULT_ENGINE_ID,
-      configId: DEFAULT_CONFIG_ID,
+      difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
     })
   })
 
-  it('round-trips engine and config', () => {
-    saveEngineSelection('lozza', 'level-3')
+  it('round-trips difficulty and color', () => {
+    saveDifficultyId('club')
     saveActiveColor('b')
     expect(hasStoredPrefs()).toBe(true)
     expect(loadPrefs()).toEqual({
-      engineId: 'lozza',
-      configId: 'level-3',
+      difficultyId: 'club',
       activeColor: 'b',
     })
   })
 
-  it('migrates legacy difficultyId to stockfish config', () => {
+  it('migrates legacy difficultyId to Flair beginner when unknown', () => {
     localStorage.setItem('xon5.difficultyId', 's6-d7')
     expect(loadPrefs()).toEqual({
-      engineId: 'stockfish',
-      configId: 'level-6',
+      difficultyId: 'beginner',
       activeColor: 'w',
     })
   })
 
   it('falls back on invalid stored values', () => {
-    localStorage.setItem('xon5.engineId', 'nope')
-    localStorage.setItem('xon5.configId', 'nope')
+    localStorage.setItem('xon5.engineId', 'lozza')
+    localStorage.setItem('xon5.configId', 'level-3')
     localStorage.setItem('xon5.activeColor', 'x')
     expect(loadPrefs()).toEqual({
-      engineId: DEFAULT_ENGINE_ID,
-      configId: DEFAULT_CONFIG_ID,
+      difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
     })
   })
 
-  it('seedDefaultPrefs writes stockfish beginner and White', () => {
+  it('seedDefaultPrefs writes Flair beginner and White', () => {
     seedDefaultPrefs()
     expect(loadPrefs()).toEqual({
-      engineId: DEFAULT_ENGINE_ID,
-      configId: DEFAULT_CONFIG_ID,
+      difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
     })
   })

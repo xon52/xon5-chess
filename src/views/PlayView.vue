@@ -6,8 +6,7 @@ import ChessBoard from '@/components/ChessBoard.vue'
 import type { BoardMove } from '@/components/ChessBoard.vue'
 import PlayModal from '@/components/PlayModal.vue'
 import PlayMoveHistory from '@/components/PlayMoveHistory.vue'
-import { ENGINE_CATALOG, getEngineCatalogEntry } from '@/engines/registry'
-import type { EngineId } from '@/engines/types'
+import { DIFFICULTY_OPTIONS } from '@/engine'
 import { formatStatusText, type PromotionPiece } from '@/play/formatters'
 import { useGameStore } from '@/stores/game'
 
@@ -22,8 +21,7 @@ const {
   legalDests,
   lastMove,
   humanColor,
-  engineId,
-  configId,
+  difficultyId,
   isHumanTurn,
   engineThinking,
   orientation,
@@ -77,23 +75,11 @@ const statusText = computed(() =>
 
 const movableColor = computed(() => (humanColor.value === 'b' ? 'black' : 'white'))
 
-const engineOptions = ENGINE_CATALOG.map((e) => ({ id: e.id, label: e.label }))
-
-const configOptions = computed(() =>
-  getEngineCatalogEntry(engineId.value).configs.map((c) => ({
-    id: c.id,
-    label: c.label,
-  })),
-)
-
-const onEngineChange = (event: Event) => {
-  const target = event.target as HTMLSelectElement
-  game.setEngineSelection(target.value as EngineId)
-}
+const configOptions = DIFFICULTY_OPTIONS
 
 const onConfigChange = (event: Event) => {
   const target = event.target as HTMLSelectElement
-  game.setEngineSelection(engineId.value, target.value)
+  game.setDifficultyId(target.value)
 }
 
 const clearPendingPromotion = () => {
@@ -190,24 +176,11 @@ const choosePromotion = (piece: PromotionPiece) => {
 
         <div class="play__engine-controls">
           <label class="play__difficulty">
-            <span class="play__difficulty-label">Engine</span>
+            <span class="play__difficulty-label">Difficulty</span>
             <select
               class="play__difficulty-select"
-              :value="engineId"
-              aria-label="Play engine"
-              @change="onEngineChange"
-            >
-              <option v-for="opt in engineOptions" :key="opt.id" :value="opt.id">
-                {{ opt.label }}
-              </option>
-            </select>
-          </label>
-          <label class="play__difficulty">
-            <span class="play__difficulty-label">Config</span>
-            <select
-              class="play__difficulty-select"
-              :value="configId"
-              aria-label="Engine config"
+              :value="difficultyId"
+              aria-label="Difficulty"
               @change="onConfigChange"
             >
               <option v-for="opt in configOptions" :key="opt.id" :value="opt.id">
