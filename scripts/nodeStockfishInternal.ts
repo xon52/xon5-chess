@@ -1,70 +1,61 @@
-import stockfishJsUrl from 'stockfish/bin/stockfish-18-lite-single.js?url'
-import stockfishWasmUrl from 'stockfish/bin/stockfish-18-lite-single.wasm?url'
+/**
+ * Node Stockfish backend for Flair simulation (no browser Worker).
+ * Uses the stockfish npm package's lite-single WASM build.
+ */
+import { createRequire } from 'node:module'
 
 import {
+  MultipvAggregator,
   parseBestMoveLine,
   parseInfoScore,
   planEvalSearch,
+  planFlairSearch,
   planPlaySearch,
+  type MultipvScoredLine,
   type UciMove,
   type UciScore,
-} from '@/engine/uci'
+} from '../src/engines/shared/uci'
+import type { StockfishInternal } from '../src/engines/stockfish/client'
+import { EVAL_MOVETIME_MS } from '../src/engines/stockfish/client'
 
-/** Eval search budget (SPEC §5). Not strength-capped. */
-export const EVAL_MOVETIME_MS = 500
-
-export type PlaySearchOpts = {
-  fen: string
-  skill: number
-  depth: number
+type NodeEngine = {
+  listener: ((line: string) => void) | null
+  sendCommand: (cmd: string) => void
+  terminate?: () => void
 }
 
-export type EngineClient = {
-  playSearch(opts: PlaySearchOpts): Promise<UciMove | null>
-  evalSearch(opts: { fen: string }): Promise<UciScore | null>
-  notifyNewGame(): void
-  /** Fire-and-forget cancel; may leave the worker draining. Prefer stopAndDrain when resuming. */
-  stop(): void
-  /** Cancel any in-flight search and wait for the worker’s stop bestmove (SPEC §5). */
-  stopAndDrain(): Promise<void>
-}
+type InitStockfish = (flavor?: string) => Promise<NodeEngine>
 
-type SearchJob = 'idle' | 'play' | 'eval' | 'draining'
+const require = createRequire(import.meta.url)
+const initStockfish = require('stockfish') as InitStockfish
 
-type PendingPlay = {
-  seq: number
-  resolve: (move: UciMove | null) => void
-}
+type SearchJob = 'idle' | 'play' | 'flair' | 'eval' | 'draining'
 
-type PendingEval = {
-  seq: number
-  resolve: (score: UciScore | null) => void
-}
+export const createNodeStockfishInternal = async (): Promise<StockfishInternal> => {
+  const engine = await initStockfish('lite-single')
 
-type StopAck = {
-  resolve: () => void
-}
-
-const createStockfishWorker = (): Worker => {
-  // Stockfish reads the wasm URL from location.hash (omit `,worker` = main UCI worker).
-  const url = `${stockfishJsUrl}#${encodeURIComponent(stockfishWasmUrl)}`
-  return new Worker(url)
-}
-
-const createDefaultClient = (): EngineClient => {
-  let worker: Worker | null = null
-  let ready: Promise<void> | null = null
   let job: SearchJob = 'idle'
   let searchSeq = 0
-  let pendingPlay: PendingPlay | null = null
-  let pendingEval: PendingEval | null = null
+  let ready: Promise<void> | null = null
+  let pendingPlay: {
+    seq: number
+    resolve: (move: UciMove | null) => void
+  } | null = null
+  let pendingFlair: {
+    seq: number
+    aggregator: MultipvAggregator
+    resolve: (lines: MultipvScoredLine[]) => void
+  } | null = null
+  let pendingEval: {
+    seq: number
+    resolve: (score: UciScore | null) => void
+  } | null = null
   let latestEvalScore: UciScore | null = null
-  let stopAck: StopAck | null = null
-  /** In-flight drain after stop / preempt; searches must await this before a new go. */
+  let stopAck: { resolve: () => void } | null = null
   let drainPromise: Promise<void> | null = null
 
   const send = (cmd: string) => {
-    worker?.postMessage(cmd)
+    engine.sendCommand(cmd)
   }
 
   const sendPlan = (plan: { setOptions: string[]; go: string }) => {
@@ -79,6 +70,11 @@ const createDefaultClient = (): EngineClient => {
       pendingPlay = null
       resolve(null)
     }
+    if (pendingFlair) {
+      const { resolve } = pendingFlair
+      pendingFlair = null
+      resolve([])
+    }
     if (pendingEval) {
       const { resolve } = pendingEval
       pendingEval = null
@@ -92,6 +88,13 @@ const createDefaultClient = (): EngineClient => {
     pendingPlay = null
     job = 'idle'
     resolve(seq === searchSeq ? parseBestMoveLine(bestmoveLine) : null)
+  }
+
+  const finishFlair = (seq: number) => {
+    const { aggregator, resolve } = pendingFlair!
+    pendingFlair = null
+    job = 'idle'
+    resolve(seq === searchSeq ? aggregator.rankedLines() : [])
   }
 
   const finishEval = (seq: number) => {
@@ -115,6 +118,10 @@ const createDefaultClient = (): EngineClient => {
       }
     }
 
+    if (job === 'flair' && pendingFlair) {
+      pendingFlair.aggregator.ingest(trimmed)
+    }
+
     if (trimmed.startsWith('bestmove ')) {
       if (pendingEval && job === 'eval') {
         finishEval(pendingEval.seq)
@@ -122,6 +129,10 @@ const createDefaultClient = (): EngineClient => {
       }
       if (pendingPlay && job === 'play') {
         finishPlay(pendingPlay.seq, trimmed)
+        return
+      }
+      if (pendingFlair && job === 'flair') {
+        finishFlair(pendingFlair.seq)
         return
       }
       if (job === 'draining' && stopAck) {
@@ -133,9 +144,8 @@ const createDefaultClient = (): EngineClient => {
     }
   }
 
-  const onMessage = (ev: MessageEvent) => {
-    const data = typeof ev.data === 'string' ? ev.data : String(ev.data ?? '')
-    for (const part of data.split('\n')) {
+  engine.listener = (raw) => {
+    for (const part of String(raw).split('\n')) {
       handleLine(part)
     }
   }
@@ -144,59 +154,44 @@ const createDefaultClient = (): EngineClient => {
     if (ready) {
       return ready
     }
-
     ready = new Promise<void>((resolve, reject) => {
-      const w = createStockfishWorker()
-      worker = w
-
       let settled = false
       const finishOk = () => {
         if (settled) {
           return
         }
         settled = true
-        w.onmessage = onMessage
         resolve()
       }
-      const finishErr = (err: unknown) => {
-        if (settled) {
-          return
-        }
-        settled = true
-        reject(err)
-      }
-
-      w.onmessage = (ev: MessageEvent) => {
-        onMessage(ev)
-        const data = typeof ev.data === 'string' ? ev.data : String(ev.data ?? '')
-        for (const part of data.split('\n')) {
+      const onBoot = (raw: string) => {
+        for (const part of String(raw).split('\n')) {
           const line = part.trim()
+          handleLine(line)
           if (line === 'uciok') {
             send('isready')
           } else if (line === 'readyok') {
+            engine.listener = (msg) => {
+              for (const p of String(msg).split('\n')) {
+                handleLine(p)
+              }
+            }
             finishOk()
           }
         }
       }
-      w.onerror = (err) => {
-        finishErr(err instanceof ErrorEvent ? (err.error ?? err.message) : err)
+      engine.listener = onBoot
+      try {
+        send('uci')
+      } catch (err) {
+        if (!settled) {
+          settled = true
+          reject(err)
+        }
       }
-
-      send('uci')
-    }).catch((err) => {
-      ready = null
-      worker?.terminate()
-      worker = null
-      throw err
     })
-
     return ready
   }
 
-  /**
-   * Begin draining an in-flight play/eval search (SPEC §5 mutex).
-   * Concurrent callers share the same drain promise.
-   */
   const startDrain = (): Promise<void> => {
     if (drainPromise) {
       return drainPromise
@@ -208,8 +203,6 @@ const createDefaultClient = (): EngineClient => {
       return drainPromise ?? Promise.resolve()
     }
 
-    // Mark draining before clearing pendings so a concurrent bestmove is discarded
-    // into stopAck rather than dropped or applied as a normal finish.
     job = 'draining'
     drainPromise = new Promise<void>((resolve) => {
       stopAck = { resolve }
@@ -222,10 +215,6 @@ const createDefaultClient = (): EngineClient => {
     return drainPromise
   }
 
-  /**
-   * Stop an in-flight eval or play search and wait for the worker’s stop
-   * `bestmove` before allowing another search (SPEC §5 mutex).
-   */
   const stopCurrentSearch = async (): Promise<void> => {
     if (job === 'idle') {
       return
@@ -233,21 +222,17 @@ const createDefaultClient = (): EngineClient => {
     await startDrain()
   }
 
-  /** Fire-and-forget cancel; leaves the worker draining so a later search can await it. */
   const stop = () => {
     searchSeq++
-    if (job === 'play' || job === 'eval') {
+    if (job === 'play' || job === 'flair' || job === 'eval') {
       void startDrain()
       return
     }
     clearPendingsNull()
   }
 
-  /** Cancel any search and wait until the worker’s stop bestmove is drained. */
   const stopAndDrain = async (): Promise<void> => {
     searchSeq++
-    // Do not clear pendings here — startDrain marks job draining first so a
-    // concurrent bestmove settles the stop ack instead of being dropped (§5).
     await stopCurrentSearch()
   }
 
@@ -257,16 +242,21 @@ const createDefaultClient = (): EngineClient => {
     })
   }
 
-  const playSearch = async (opts: PlaySearchOpts): Promise<UciMove | null> => {
+  const isBusyPlayLike = () => job === 'play' || job === 'flair'
+
+  const playSearchRaw = async (opts: {
+    fen: string
+    skill: number
+    depth: number
+  }): Promise<UciMove | null> => {
     await ensureReady()
 
     if (job === 'eval' || job === 'draining') {
       await stopCurrentSearch()
-    } else if (job === 'play') {
+    } else if (isBusyPlayLike()) {
       return null
     }
 
-    // Re-check after await: another call may have started, or stop() may have run.
     if (job !== 'idle') {
       return null
     }
@@ -283,17 +273,53 @@ const createDefaultClient = (): EngineClient => {
     })
   }
 
+  const flairSearchRaw = async (opts: {
+    fen: string
+    depth: number
+    multipv: number
+    searchmoves?: string[]
+  }): Promise<MultipvScoredLine[]> => {
+    await ensureReady()
+
+    if (job === 'eval' || job === 'draining') {
+      await stopCurrentSearch()
+    } else if (isBusyPlayLike()) {
+      return []
+    }
+
+    if (job !== 'idle') {
+      return []
+    }
+
+    const seq = ++searchSeq
+    job = 'flair'
+    const plan = planFlairSearch({
+      depth: opts.depth,
+      multipv: opts.multipv,
+      searchmoves: opts.searchmoves,
+    })
+    sendPlan(plan)
+    send(`position fen ${opts.fen}`)
+
+    return new Promise<MultipvScoredLine[]>((resolve) => {
+      pendingFlair = {
+        seq,
+        aggregator: new MultipvAggregator({ exactOnly: true }),
+        resolve,
+      }
+      send(plan.go)
+    })
+  }
+
   const evalSearch = async (opts: { fen: string }): Promise<UciScore | null> => {
     await ensureReady()
 
     if (job === 'eval' || job === 'draining') {
       await stopCurrentSearch()
-    } else if (job === 'play') {
-      // Do not cancel play for eval; the store holds win% while thinking.
+    } else if (isBusyPlayLike()) {
       return null
     }
 
-    // Re-check after await: another call may have started, or stop() may have run.
     if (job !== 'idle') {
       return null
     }
@@ -311,14 +337,14 @@ const createDefaultClient = (): EngineClient => {
     })
   }
 
-  return { playSearch, evalSearch, notifyNewGame, stop, stopAndDrain }
-}
+  await ensureReady()
 
-let client: EngineClient = createDefaultClient()
-
-export const getEngineClient = (): EngineClient => client
-
-/** Replace the engine client (tests). Pass `null` to restore the default Stockfish client. */
-export const setEngineClient = (next: EngineClient | null) => {
-  client = next ?? createDefaultClient()
+  return {
+    playSearchRaw,
+    flairSearchRaw,
+    evalSearch,
+    notifyNewGame,
+    stop,
+    stopAndDrain,
+  }
 }

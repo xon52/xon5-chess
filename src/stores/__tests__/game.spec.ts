@@ -2,43 +2,72 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { DEFAULT_POSITION } from 'chess.js'
 
-import { setEngineClient, type EngineClient } from '@/engine/stockfishClient'
-import type { UciMove, UciScore } from '@/engine/uci'
+import {
+  resetEngineRegistry,
+  setEvalEngine,
+  setPlayEngine,
+} from '@/engines/registry'
+import type { EvalEngine, PlayEngine } from '@/engines/types'
+import type { UciMove, UciScore } from '@/engines/shared/uci'
 import { useGameStore } from '../game'
 
-const installEngineMock = (partial: Partial<EngineClient> = {}) => {
-  const mock: EngineClient = {
-    playSearch: vi.fn(async () => null),
-    evalSearch: vi.fn(async () => null),
-    notifyNewGame: vi.fn(),
-    stop: vi.fn(),
-    stopAndDrain: vi.fn(async () => {}),
-    ...partial,
-  }
-  if (!partial.stopAndDrain) {
-    mock.stopAndDrain = vi.fn(async () => {
-      mock.stop()
+type MockBundle = {
+  play: PlayEngine
+  eval: EvalEngine
+  playSearch: ReturnType<typeof vi.fn>
+  evalSearch: ReturnType<typeof vi.fn>
+  notifyNewGame: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+  stopAndDrain: ReturnType<typeof vi.fn>
+}
+
+const installEngineMock = (
+  partial: Partial<{
+    playSearch: PlayEngine['playSearch']
+    evalSearch: EvalEngine['evalSearch']
+    notifyNewGame: PlayEngine['notifyNewGame']
+    stop: PlayEngine['stop']
+    stopAndDrain: PlayEngine['stopAndDrain']
+  }> = {},
+): MockBundle => {
+  const stop = vi.fn(partial.stop ?? (() => {}))
+  const stopAndDrain =
+    (partial.stopAndDrain as ReturnType<typeof vi.fn> | undefined) ??
+    vi.fn(async () => {
+      stop()
     })
+  const playSearch = (partial.playSearch as ReturnType<typeof vi.fn> | undefined) ?? vi.fn(async () => null)
+  const evalSearch = (partial.evalSearch as ReturnType<typeof vi.fn> | undefined) ?? vi.fn(async () => null)
+  const notifyNewGame = (partial.notifyNewGame as ReturnType<typeof vi.fn> | undefined) ?? vi.fn()
+
+  const play: PlayEngine = {
+    id: 'stockfish',
+    playSearch,
+    notifyNewGame,
+    stop,
+    stopAndDrain,
   }
-  setEngineClient(mock)
-  return mock
+  const evalEng: EvalEngine = {
+    evalSearch,
+    stop,
+    stopAndDrain,
+    notifyNewGame,
+  }
+  setPlayEngine('stockfish', play)
+  setEvalEngine(evalEng)
+  return { play, eval: evalEng, playSearch, evalSearch, notifyNewGame, stop, stopAndDrain }
 }
 
 describe('useGameStore', () => {
   beforeEach(() => {
     localStorage.clear()
     setActivePinia(createPinia())
+    resetEngineRegistry()
     installEngineMock()
   })
 
   afterEach(() => {
-    setEngineClient({
-      playSearch: async () => null,
-      evalSearch: async () => null,
-      notifyNewGame: () => {},
-      stop: () => {},
-      stopAndDrain: async () => {},
-    })
+    resetEngineRegistry()
   })
 
   const startAsWhite = (store = useGameStore()) => {
@@ -92,23 +121,82 @@ describe('useGameStore', () => {
 
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('level-1')
+    expect(store.engineId).toBe('stockfish')
+    expect(store.configId).toBe('level-1')
     expect(store.isHumanTurn).toBe(true)
     expect(store.orientation).toBe('white')
     expect(store.history).toEqual([])
     expect(store.legalDests.get('e2')).toEqual(expect.arrayContaining(['e3', 'e4']))
   })
 
-  it('setDifficultyId persists across reset', () => {
+  it('setEngineSelection persists across reset', () => {
     const store = useGameStore()
-    store.setDifficultyId('level-5')
+    store.setEngineSelection('stockfish', 'level-5')
     store.activeColor = 'w'
     store.newGame()
-    expect(store.difficultyId).toBe('level-5')
+    expect(store.configId).toBe('level-5')
 
     store.reset()
     expect(store.humanColor).toBeNull()
-    expect(store.difficultyId).toBe('level-5')
+    expect(store.configId).toBe('level-5')
+  })
+
+  it('mid-game engine change drains previous engine and notifies the next', async () => {
+    const prevDrain = vi.fn(async () => {})
+    installEngineMock({ stopAndDrain: prevDrain })
+    const store = startAsWhite()
+
+    const nextNotify = vi.fn()
+    const nextPlay: PlayEngine = {
+      id: 'heuristic',
+      playSearch: vi.fn(async () => null),
+      notifyNewGame: nextNotify,
+      stop: vi.fn(),
+      stopAndDrain: vi.fn(async () => {}),
+    }
+    setPlayEngine('heuristic', nextPlay)
+
+    store.setEngineSelection('heuristic', 'novice')
+    expect(store.engineId).toBe('heuristic')
+    expect(store.configId).toBe('novice')
+    expect(localStorage.getItem('xon5.engineId')).toBe('heuristic')
+    expect(localStorage.getItem('xon5.configId')).toBe('novice')
+
+    await vi.waitFor(() => expect(prevDrain).toHaveBeenCalled())
+    await vi.waitFor(() => expect(nextNotify).toHaveBeenCalled())
+  })
+
+  it('mid-game engine change on engine turn restarts play search', async () => {
+    const prevDrain = vi.fn(async () => {})
+    installEngineMock({
+      playSearch: vi.fn(
+        () =>
+          new Promise<UciMove | null>(() => {
+            /* hang until cancelled via generation */
+          }),
+      ),
+      stopAndDrain: prevDrain,
+    })
+    const store = startAsWhite()
+    expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
+    expect(store.engineThinking).toBe(true)
+
+    const nextSearch = vi.fn(async () => ({ from: 'e7', to: 'e5' }) satisfies UciMove)
+    const nextPlay: PlayEngine = {
+      id: 'lozza',
+      playSearch: nextSearch,
+      notifyNewGame: vi.fn(),
+      stop: vi.fn(),
+      stopAndDrain: vi.fn(async () => {}),
+    }
+    setPlayEngine('lozza', nextPlay)
+
+    store.setEngineSelection('lozza', 'level-3')
+    expect(store.engineThinking).toBe(false)
+
+    await vi.waitFor(() => expect(nextSearch).toHaveBeenCalled())
+    await vi.waitFor(() => expect(store.isHumanTurn).toBe(true))
+    expect(store.history).toEqual(['e4', 'e5'])
   })
 
   it('newGame as Black locks the board on White to move', () => {
@@ -154,8 +242,8 @@ describe('useGameStore', () => {
 
     expect(store.startFirstVisitIfNeeded()).toBe(true)
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('level-1')
-    expect(localStorage.getItem('xon5.difficultyId')).toBe('level-1')
+    expect(store.configId).toBe('level-1')
+    expect(localStorage.getItem('xon5.configId')).toBe('level-1')
     expect(localStorage.getItem('xon5.activeColor')).toBe('w')
     expect(store.startFirstVisitIfNeeded()).toBe(false)
   })
@@ -301,13 +389,13 @@ describe('useGameStore', () => {
   it('newGame replaces an in-progress game', () => {
     const store = startAsWhite()
     store.tryMove({ from: 'd2', to: 'd4' })
-    store.setDifficultyId('level-5')
+    store.setEngineSelection('stockfish', 'level-5')
     store.newGame()
     expect(store.fen).toBe(DEFAULT_POSITION)
     expect(store.turn).toBe('w')
     expect(store.history).toEqual([])
     expect(store.humanColor).toBe('w')
-    expect(store.difficultyId).toBe('level-5')
+    expect(store.configId).toBe('level-5')
     expect(store.isHumanTurn).toBe(true)
   })
 
@@ -477,7 +565,7 @@ describe('useGameStore', () => {
       const playSearch = vi.fn(async () => ({ from: 'e7', to: 'e5' }) satisfies UciMove)
       const mock = installEngineMock({ playSearch })
       const store = startAsWhite()
-      store.setDifficultyId('level-5')
+      store.setEngineSelection('stockfish', 'level-5')
 
       expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
       expect(store.engineThinking).toBe(true)
@@ -486,8 +574,8 @@ describe('useGameStore', () => {
 
       expect(playSearch).toHaveBeenCalledWith({
         fen: expect.stringContaining('4P3'),
-        skill: 7,
-        depth: 5,
+        configId: 'level-5',
+        recentMoves: [{ from: 'e2', to: 'e4', promotion: undefined }],
       })
       expect(store.history).toEqual(['e4', 'e5'])
       expect(store.engineThinking).toBe(false)

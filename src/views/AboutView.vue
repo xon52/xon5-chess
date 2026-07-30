@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { DIFFICULTY_PRESETS } from '@/game/difficulty'
+import { ENGINE_CATALOG } from '@/engines/registry'
+import { STOCKFISH_CONFIGS } from '@/engines/stockfish/configs'
 </script>
 
 <template>
@@ -19,33 +20,32 @@ import { DIFFICULTY_PRESETS } from '@/game/difficulty'
         don’t need to keep chasing that money — free, simple apps like this are how I give back.
       </p>
 
-      <h2 class="page__subtitle">How it works</h2>
+      <h2 class="page__subtitle">Engines</h2>
       <p>
-        The opponent is Stockfish configured with two controls:
-        <strong>Skill Level</strong> (how often it picks a weaker candidate) and
-        <strong>Depth</strong> (how far it looks). Skill Level weights poorer moves more at lower
-        settings, but only within a score window — it avoids catastrophic “free queen” hangs that
-        blind ranking of MultiPV lines can allow. Play searches use those settings only — not
-        time-based Elo limiting. Evaluation for the win% graph stays at full skill so strength
-        limiting does not poison the displayed score.
+        Pick an <strong>engine</strong> and a <strong>config</strong> for that engine. Win%
+        evaluation always uses full-strength Stockfish so the graph is not poisoned by weaker play
+        settings.
       </p>
-      <p>
-        There is no Elo rating claim — difficulty is named levels only.
-      </p>
+      <ul>
+        <li v-for="eng in ENGINE_CATALOG" :key="eng.id">
+          <strong>{{ eng.label }}</strong> — {{ eng.configs.length }} config(s)
+        </li>
+      </ul>
 
-      <div class="page__table-wrap" role="region" aria-label="Difficulty levels">
+      <h2 class="page__subtitle">Stockfish levels</h2>
+      <div class="page__table-wrap" role="region" aria-label="Stockfish configs">
         <table class="page__table">
           <thead>
             <tr>
-              <th scope="col">Level</th>
+              <th scope="col">Config</th>
               <th scope="col">Skill</th>
               <th scope="col">Depth</th>
               <th scope="col">Profile</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="band in DIFFICULTY_PRESETS" :key="band.id">
-              <td>{{ band.name }}</td>
+            <tr v-for="band in STOCKFISH_CONFIGS" :key="band.id">
+              <td>{{ band.label }}</td>
               <td>{{ band.playSkill }}</td>
               <td>{{ band.playDepth }}</td>
               <td>{{ band.profile }}</td>
@@ -53,6 +53,10 @@ import { DIFFICULTY_PRESETS } from '@/game/difficulty'
           </tbody>
         </table>
       </div>
+      <p>
+        Maia needs ONNX weights fetched once with <code>pnpm fetch:maia</code> before that engine
+        can play.
+      </p>
     </div>
   </main>
 </template>
@@ -90,16 +94,27 @@ import { DIFFICULTY_PRESETS } from '@/game/difficulty'
   gap: 1rem;
 }
 
-.page__prose p {
+.page__prose p,
+.page__prose li {
   margin: 0;
   font-size: 1.05rem;
   line-height: 1.55;
   color: var(--color-ivory-muted);
 }
 
+.page__prose ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
 .page__prose strong {
   color: var(--color-ivory);
   font-weight: 600;
+}
+
+.page__prose code {
+  font-size: 0.9em;
+  color: var(--color-ivory);
 }
 
 .page__table-wrap {

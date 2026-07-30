@@ -12,11 +12,16 @@ import { Chess, DEFAULT_POSITION } from 'chess.js'
 
 import ChessBoard from '@/components/ChessBoard.vue'
 
-import { setEngineClient, type EngineClient } from '@/engine/stockfishClient'
+import {
+  resetEngineRegistry,
+  setEvalEngine,
+  setPlayEngine,
+} from '@/engines/registry'
+import type { EvalEngine, PlayEngine } from '@/engines/types'
 
-import type { UciMove } from '@/engine/uci'
+import type { UciMove } from '@/engines/shared/uci'
 
-import { saveActiveColor, saveDifficulty } from '@/game/prefs'
+import { saveActiveColor, saveEngineSelection } from '@/game/prefs'
 
 import { useGameStore } from '@/stores/game'
 
@@ -61,65 +66,47 @@ const legalReply = (fen: string): UciMove | null => {
 
 
 const installPlayEngineMock = () => {
-
-  const mock: EngineClient = {
-
+  const stop = vi.fn()
+  const play: PlayEngine = {
+    id: 'stockfish',
     playSearch: vi.fn(async ({ fen }) => legalReply(fen)),
-
-    evalSearch: vi.fn(async () => null),
-
     notifyNewGame: vi.fn(),
-
-    stop: vi.fn(),
-
-    stopAndDrain: vi.fn(async () => {}),
-
+    stop,
+    stopAndDrain: vi.fn(async () => { stop() }),
   }
-
-  mock.stopAndDrain = vi.fn(async () => {
-
-    mock.stop()
-
-  })
-
-  setEngineClient(mock)
-
-  return mock
-
+  const evalEng: EvalEngine = {
+    evalSearch: vi.fn(async () => null),
+    stop,
+    stopAndDrain: play.stopAndDrain,
+  }
+  setPlayEngine('stockfish', play)
+  setEvalEngine(evalEng)
+  return play
 }
 
 
 
-const engineClient = (partial: Partial<EngineClient> = {}): EngineClient => {
-
-  const mock: EngineClient = {
-
-    playSearch: vi.fn(async ({ fen }) => legalReply(fen)),
-
-    evalSearch: vi.fn(async () => null),
-
-    notifyNewGame: vi.fn(),
-
-    stop: vi.fn(),
-
-    stopAndDrain: vi.fn(async () => {}),
-
-    ...partial,
-
+const engineClient = (partial: Partial<PlayEngine & { evalSearch?: EvalEngine['evalSearch'] }> = {}): PlayEngine => {
+  const stop = (partial.stop as any) ?? vi.fn()
+  const play: PlayEngine = {
+    id: 'stockfish',
+    playSearch: (partial.playSearch as any) ?? vi.fn(async ({ fen }) => legalReply(fen)),
+    notifyNewGame: (partial.notifyNewGame as any) ?? vi.fn(),
+    stop,
+    stopAndDrain:
+      (partial.stopAndDrain as any) ??
+      vi.fn(async () => {
+        stop()
+      }),
   }
-
-  if (!partial.stopAndDrain) {
-
-    mock.stopAndDrain = vi.fn(async () => {
-
-      mock.stop()
-
-    })
-
+  const evalEng: EvalEngine = {
+    evalSearch: (partial.evalSearch as any) ?? vi.fn(async () => null),
+    stop,
+    stopAndDrain: play.stopAndDrain,
   }
-
-  return mock
-
+  setPlayEngine('stockfish', play)
+  setEvalEngine(evalEng)
+  return play
 }
 
 
@@ -132,7 +119,7 @@ describe('PlayView', () => {
 
     // Seed prefs so PlayView does not auto-start a first-visit game.
 
-    saveDifficulty('level-1')
+    saveEngineSelection('stockfish', 'level-1')
 
     saveActiveColor('w')
 
@@ -146,7 +133,7 @@ describe('PlayView', () => {
 
   afterEach(() => {
 
-    setEngineClient(null)
+    resetEngineRegistry()
 
   })
 
@@ -232,7 +219,7 @@ describe('PlayView', () => {
 
   describe('start gate', () => {
 
-    it('cleared state hides eval and moves; shows Ready, Start, Flip, and difficulty', () => {
+    it('cleared state hides eval and moves; shows Ready, Start, Flip, and engine controls', () => {
 
       const { wrapper, store } = mountPlay()
 
@@ -246,7 +233,9 @@ describe('PlayView', () => {
 
       expect(wrapper.text()).toContain('Flip')
 
-      expect(wrapper.text()).toContain('Difficulty')
+      expect(wrapper.text()).toContain('Engine')
+
+      expect(wrapper.text()).toContain('Config')
 
       expect(wrapper.text()).not.toContain('Resign')
 
@@ -256,7 +245,7 @@ describe('PlayView', () => {
 
       expect(wrapper.find('.play__history').exists()).toBe(false)
 
-      expect(wrapper.find('.play__difficulty-select').exists()).toBe(true)
+      expect(wrapper.findAll('.play__difficulty-select')).toHaveLength(2)
 
     })
 
@@ -302,7 +291,7 @@ describe('PlayView', () => {
 
       expect(store.humanColor).toBe('w')
 
-      expect(store.difficultyId).toBe('level-1')
+      expect(store.configId).toBe('level-1')
 
       expect(store.isHumanTurn).toBe(true)
 
@@ -330,21 +319,25 @@ describe('PlayView', () => {
 
 
 
-    it('difficulty select updates store band on the fly', async () => {
+    it('config select updates store band on the fly', async () => {
 
       const { wrapper, store } = mountPlay()
 
-      const select = wrapper.find('.play__difficulty-select')
+      const selects = wrapper.findAll('.play__difficulty-select')
 
-      await select.setValue('level-5')
+      const configSelect = selects[1]!
+
+      await configSelect.setValue('level-5')
 
       await nextTick()
 
 
 
-      expect(store.difficultyId).toBe('level-5')
+      expect(store.engineId).toBe('stockfish')
 
-      expect(select.text()).toContain('Solid')
+      expect(store.configId).toBe('level-5')
+
+      expect(configSelect.text()).toContain('Solid')
 
     })
 
@@ -366,11 +359,11 @@ describe('PlayView', () => {
 
       expect(store.activeColor).toBe('w')
 
-      expect(store.difficultyId).toBe('level-1')
+      expect(store.configId).toBe('level-1')
 
       expect(store.isHumanTurn).toBe(true)
 
-      expect(localStorage.getItem('xon5.difficultyId')).toBe('level-1')
+      expect(localStorage.getItem('xon5.configId')).toBe('level-1')
 
       expect(localStorage.getItem('xon5.activeColor')).toBe('w')
 
@@ -434,7 +427,7 @@ describe('PlayView', () => {
 
 
 
-      // Opponent pieces remain unmovable â human is White.
+      // Opponent pieces remain unmovable ? human is White.
 
       const afterEngine = store.fen
 
@@ -450,17 +443,13 @@ describe('PlayView', () => {
 
       const evalSearch = vi.fn(async () => ({ kind: 'cp' as const, value: 400 }))
 
-      setEngineClient(
-
-        engineClient({
+      void engineClient({
 
           playSearch: vi.fn(async ({ fen }) => legalReply(fen)),
 
           evalSearch,
 
-        }),
-
-      )
+        })
 
 
 
@@ -538,25 +527,14 @@ describe('PlayView', () => {
 
       let resolveSearch!: (move: UciMove | null) => void
 
-      setEngineClient(
-
-        engineClient({
-
-          playSearch: vi.fn(
-
-            () =>
-
-              new Promise<UciMove | null>((resolve) => {
-
-                resolveSearch = resolve
-
-              }),
-
-          ),
-
-        }),
-
-      )
+      void engineClient({
+        playSearch: vi.fn(
+          () =>
+            new Promise<UciMove | null>((resolve) => {
+              resolveSearch = resolve
+            }),
+        ),
+      })
 
 
 
@@ -602,25 +580,14 @@ describe('PlayView', () => {
 
       let resolveSearch!: (move: UciMove | null) => void
 
-      setEngineClient(
-
-        engineClient({
-
-          playSearch: vi.fn(
-
-            () =>
-
-              new Promise<UciMove | null>((resolve) => {
-
-                resolveSearch = resolve
-
-              }),
-
-          ),
-
-        }),
-
-      )
+      void engineClient({
+        playSearch: vi.fn(
+          () =>
+            new Promise<UciMove | null>((resolve) => {
+              resolveSearch = resolve
+            }),
+        ),
+      })
 
 
 
@@ -638,9 +605,9 @@ describe('PlayView', () => {
 
 
 
-      // Engine still thinking â board must stay locked via engineThinking
+      // Engine still thinking ? board must stay locked via engineThinking
 
-      // (SPEC Â§3), not only via !isHumanTurn.
+      // (SPEC ?3), not only via !isHumanTurn.
 
       expect(store.isHumanTurn).toBe(false)
 
@@ -1026,7 +993,7 @@ describe('PlayView', () => {
 
       // Real mate with history: Undo restores play, then Resign clears the session.
 
-      setEngineClient(engineClient({ playSearch: vi.fn(async () => null) }))
+      void engineClient({ playSearch: vi.fn(async () => null) })
 
       expect(store.loadFen(DEFAULT_POSITION)).toBe(true)
 
@@ -1184,7 +1151,7 @@ describe('PlayView', () => {
 
 
 
-    it('Undo is disabled for Black before the humanâs first move', async () => {
+    it('Undo is disabled for Black before the human?s first move', async () => {
 
       const { wrapper, store } = mountPlay()
 
@@ -1210,7 +1177,7 @@ describe('PlayView', () => {
 
     it('Undo after engine mate restores human turn and unlocks the board', async () => {
 
-      setEngineClient(engineClient({ playSearch: vi.fn(async () => null) }))
+      void engineClient({ playSearch: vi.fn(async () => null) })
 
       const { wrapper, store } = mountPlay()
 
@@ -1266,27 +1233,15 @@ describe('PlayView', () => {
 
       const stopAndDrain = vi.fn(async () => {})
 
-      setEngineClient(
-
-        engineClient({
-
-          playSearch: vi.fn(
-
-            () =>
-
-              new Promise<UciMove | null>((resolve) => {
-
-                resolveSearch = resolve
-
-              }),
-
-          ),
-
-          stopAndDrain,
-
-        }),
-
-      )
+      void engineClient({
+        playSearch: vi.fn(
+          () =>
+            new Promise<UciMove | null>((resolve) => {
+              resolveSearch = resolve
+            }),
+        ),
+        stopAndDrain,
+      })
 
 
 
@@ -1356,7 +1311,7 @@ describe('PlayView', () => {
 
         .mockImplementation(async ({ fen }: { fen: string }) => legalReply(fen))
 
-      setEngineClient(engineClient({ playSearch }))
+      void engineClient({ playSearch })
 
 
 

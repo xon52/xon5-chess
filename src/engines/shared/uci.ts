@@ -76,12 +76,19 @@ export type MultipvInfoLine = {
   multipv: number
   depth: number
   move: UciMove
+  score: UciScore
+  /** True when the score carries lowerbound/upperbound. */
+  bound: boolean
+}
+
+export type MultipvScoredLine = {
+  move: UciMove
+  score: UciScore
 }
 
 /**
- * Parse `info … multipv K … depth D … pv <move> …`.
- * Requires multipv + depth + pv first-move; returns null otherwise.
- * Bound-tagged lines are accepted when they still include a pv move.
+ * Parse `info … multipv K … depth D … score … pv <move> …`.
+ * Requires multipv + depth + score + pv first-move; returns null otherwise.
  */
 export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
   const trimmed = line.trim()
@@ -90,8 +97,9 @@ export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
   }
   const multipvMatch = /\bmultipv (\d+)\b/.exec(trimmed)
   const depthMatch = /\bdepth (\d+)\b/.exec(trimmed)
+  const scoreMatch = /\bscore (cp|mate) (-?\d+)\b/.exec(trimmed)
   const pvMatch = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)\b/i.exec(trimmed)
-  if (!multipvMatch || !depthMatch || !pvMatch) {
+  if (!multipvMatch || !depthMatch || !scoreMatch || !pvMatch) {
     return null
   }
   const move = parseUciMove(pvMatch[1]!)
@@ -102,7 +110,14 @@ export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
     multipv: Number(multipvMatch[1]),
     depth: Number(depthMatch[1]),
     move,
+    score: { kind: scoreMatch[1] as 'cp' | 'mate', value: Number(scoreMatch[2]) },
+    bound: /\b(lowerbound|upperbound)\b/.test(trimmed),
   }
+}
+
+export type MultipvAggregatorOptions = {
+  /** When true, skip lowerbound/upperbound score lines (Flair classification). */
+  exactOnly?: boolean
 }
 
 /**
@@ -112,11 +127,19 @@ export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
  */
 export class MultipvAggregator {
   private maxDepth = 0
-  private byIndex = new Map<number, UciMove>()
+  private byIndex = new Map<number, MultipvScoredLine>()
+  private readonly exactOnly: boolean
+
+  constructor(opts: MultipvAggregatorOptions = {}) {
+    this.exactOnly = opts.exactOnly === true
+  }
 
   ingest(line: string): void {
     const parsed = parseMultipvInfoLine(line)
     if (!parsed) {
+      return
+    }
+    if (this.exactOnly && parsed.bound) {
       return
     }
     if (parsed.depth > this.maxDepth) {
@@ -124,26 +147,44 @@ export class MultipvAggregator {
       this.byIndex.clear()
     }
     if (parsed.depth === this.maxDepth) {
-      this.byIndex.set(parsed.multipv, parsed.move)
+      this.byIndex.set(parsed.multipv, { move: parsed.move, score: parsed.score })
     }
   }
 
   /** Contiguous prefix from multipv 1; empty if #1 missing. */
-  rankedMoves(): UciMove[] {
+  rankedLines(): MultipvScoredLine[] {
     if (!this.byIndex.has(1)) {
       return []
     }
-    const out: UciMove[] = []
+    const out: MultipvScoredLine[] = []
     for (let i = 1; this.byIndex.has(i); i++) {
       out.push(this.byIndex.get(i)!)
     }
     return out
   }
 
+  /** Contiguous prefix of moves only (index 0 = multipv 1). */
+  rankedMoves(): UciMove[] {
+    return this.rankedLines().map((line) => line.move)
+  }
+
   reset(): void {
     this.maxDepth = 0
     this.byIndex.clear()
   }
+}
+
+/** Mate scores sit far above any realistic cp so they dominate swing. */
+export const MATE_COMPARABLE_CP = 100_000
+
+/** Map UCI score to a comparable STM centipawn (mates → large ±sentinels). */
+export const scoreToComparableCp = (score: UciScore): number => {
+  if (score.kind === 'cp') {
+    return score.value
+  }
+  const plies = Math.min(Math.abs(score.value), 99)
+  const magnitude = MATE_COMPARABLE_CP - plies * 100
+  return score.value > 0 ? magnitude : -magnitude
 }
 
 /**
@@ -197,3 +238,26 @@ export const planEvalSearch = (evalMovetimeMs: number): UciCommandPlan => ({
   ],
   go: `go movetime ${evalMovetimeMs}`,
 })
+
+/** Full-strength MultiPV search for Flair CP-swing sampling. */
+export const planFlairSearch = (opts: {
+  depth: number
+  multipv: number
+  searchmoves?: string[]
+}): UciCommandPlan => {
+  const depth = Math.max(1, Math.floor(opts.depth))
+  const multipv = Math.max(1, Math.floor(opts.multipv))
+  const moves = (opts.searchmoves ?? []).filter(Boolean)
+  const go =
+    moves.length > 0
+      ? `go depth ${depth} searchmoves ${moves.join(' ')}`
+      : `go depth ${depth}`
+  return {
+    setOptions: [
+      'setoption name UCI_LimitStrength value false',
+      'setoption name Skill Level value 20',
+      `setoption name MultiPV value ${multipv}`,
+    ],
+    go,
+  }
+}

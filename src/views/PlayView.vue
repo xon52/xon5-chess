@@ -6,11 +6,8 @@ import ChessBoard from '@/components/ChessBoard.vue'
 import type { BoardMove } from '@/components/ChessBoard.vue'
 import PlayModal from '@/components/PlayModal.vue'
 import PlayMoveHistory from '@/components/PlayMoveHistory.vue'
-import {
-  DIFFICULTY_PRESETS,
-  formatDifficultyLabel,
-  type DifficultyId,
-} from '@/game/difficulty'
+import { ENGINE_CATALOG, getEngineCatalogEntry } from '@/engines/registry'
+import type { EngineId } from '@/engines/types'
 import { formatStatusText, type PromotionPiece } from '@/play/formatters'
 import { useGameStore } from '@/stores/game'
 
@@ -25,7 +22,8 @@ const {
   legalDests,
   lastMove,
   humanColor,
-  difficultyId,
+  engineId,
+  configId,
   isHumanTurn,
   engineThinking,
   orientation,
@@ -79,14 +77,23 @@ const statusText = computed(() =>
 
 const movableColor = computed(() => (humanColor.value === 'b' ? 'black' : 'white'))
 
-const difficultyOptions = DIFFICULTY_PRESETS.map((preset) => ({
-  id: preset.id,
-  label: formatDifficultyLabel(preset),
-}))
+const engineOptions = ENGINE_CATALOG.map((e) => ({ id: e.id, label: e.label }))
 
-const onDifficultyChange = (event: Event) => {
+const configOptions = computed(() =>
+  getEngineCatalogEntry(engineId.value).configs.map((c) => ({
+    id: c.id,
+    label: c.label,
+  })),
+)
+
+const onEngineChange = (event: Event) => {
   const target = event.target as HTMLSelectElement
-  game.setDifficultyId(target.value as DifficultyId)
+  game.setEngineSelection(target.value as EngineId)
+}
+
+const onConfigChange = (event: Event) => {
+  const target = event.target as HTMLSelectElement
+  game.setEngineSelection(engineId.value, target.value)
 }
 
 const clearPendingPromotion = () => {
@@ -148,7 +155,6 @@ const onBoardMove = ({ from, to }: BoardMove) => {
     return
   }
   game.tryMove({ from, to })
-  // Store is source of truth; ChessBoard watches fen/dests and snaps back on reject.
 }
 
 const choosePromotion = (piece: PromotionPiece) => {
@@ -182,19 +188,34 @@ const choosePromotion = (piece: PromotionPiece) => {
       <aside class="play__panel">
         <p class="play__status">{{ statusText }}</p>
 
-        <label class="play__difficulty">
-          <span class="play__difficulty-label">Difficulty</span>
-          <select
-            class="play__difficulty-select"
-            :value="difficultyId"
-            aria-label="Engine difficulty"
-            @change="onDifficultyChange"
-          >
-            <option v-for="opt in difficultyOptions" :key="opt.id" :value="opt.id">
-              {{ opt.label }}
-            </option>
-          </select>
-        </label>
+        <div class="play__engine-controls">
+          <label class="play__difficulty">
+            <span class="play__difficulty-label">Engine</span>
+            <select
+              class="play__difficulty-select"
+              :value="engineId"
+              aria-label="Play engine"
+              @change="onEngineChange"
+            >
+              <option v-for="opt in engineOptions" :key="opt.id" :value="opt.id">
+                {{ opt.label }}
+              </option>
+            </select>
+          </label>
+          <label class="play__difficulty">
+            <span class="play__difficulty-label">Config</span>
+            <select
+              class="play__difficulty-select"
+              :value="configId"
+              aria-label="Engine config"
+              @change="onConfigChange"
+            >
+              <option v-for="opt in configOptions" :key="opt.id" :value="opt.id">
+                {{ opt.label }}
+              </option>
+            </select>
+          </label>
+        </div>
 
         <PlayMoveHistory
           v-if="showMoves"
@@ -309,6 +330,12 @@ const choosePromotion = (piece: PromotionPiece) => {
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--color-ivory);
+}
+
+.play__engine-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .play__difficulty {

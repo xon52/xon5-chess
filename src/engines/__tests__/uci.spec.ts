@@ -8,9 +8,11 @@ import {
   parseMultipvInfoLine,
   parseUciMove,
   planEvalSearch,
+  planFlairSearch,
   planPlaySearch,
+  scoreToComparableCp,
   scoreToWhiteBlackPct,
-} from '@/engine/uci'
+} from '@/engines/shared/uci'
 
 const DEFAULT_POSITION =
   'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
@@ -68,6 +70,25 @@ describe('uci helpers', () => {
     })
   })
 
+  it('plans Flair MultiPV search at Skill 20', () => {
+    expect(planFlairSearch({ depth: 8, multipv: 12 })).toEqual({
+      setOptions: [
+        'setoption name UCI_LimitStrength value false',
+        'setoption name Skill Level value 20',
+        'setoption name MultiPV value 12',
+      ],
+      go: 'go depth 8',
+    })
+    expect(planFlairSearch({ depth: 8, multipv: 3, searchmoves: ['e2e4', 'd5c6'] })).toEqual({
+      setOptions: [
+        'setoption name UCI_LimitStrength value false',
+        'setoption name Skill Level value 20',
+        'setoption name MultiPV value 3',
+      ],
+      go: 'go depth 8 searchmoves e2e4 d5c6',
+    })
+  })
+
   it('reads side to move from FEN', () => {
     expect(
       fenSideToMove('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'),
@@ -82,6 +103,8 @@ describe('uci helpers', () => {
       multipv: 2,
       depth: 4,
       move: { from: 'd2', to: 'd4', promotion: undefined },
+      score: { kind: 'cp', value: 10 },
+      bound: false,
     })
     expect(parseMultipvInfoLine('info depth 4 score cp 10 pv e2e4')).toBeNull()
 
@@ -91,6 +114,12 @@ describe('uci helpers', () => {
     agg.ingest('info depth 4 multipv 1 score cp 25 pv e2e4')
     // Stale multipv 2 at depth 3 must not appear; missing #2 at depth 4 → prefix of 1.
     expect(agg.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
+    expect(agg.rankedLines()).toEqual([
+      {
+        move: { from: 'e2', to: 'e4', promotion: undefined },
+        score: { kind: 'cp', value: 25 },
+      },
+    ])
     agg.ingest('info depth 4 multipv 2 score cp 12 pv d2d4')
     expect(agg.rankedMoves()).toEqual([
       { from: 'e2', to: 'e4', promotion: undefined },
@@ -101,6 +130,31 @@ describe('uci helpers', () => {
     gappy.ingest('info depth 5 multipv 1 score cp 1 pv e2e4')
     gappy.ingest('info depth 5 multipv 3 score cp 0 pv c2c4')
     expect(gappy.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
+  })
+
+  it('exactOnly aggregator skips bound-tagged MultiPV scores', () => {
+    const agg = new MultipvAggregator({ exactOnly: true })
+    agg.ingest('info depth 4 multipv 1 score cp 40 lowerbound pv e2e4')
+    expect(agg.rankedLines()).toEqual([])
+    agg.ingest('info depth 4 multipv 1 score cp 35 pv e2e4')
+    agg.ingest('info depth 4 multipv 2 score cp 10 upperbound pv d2d4')
+    expect(agg.rankedLines()).toEqual([
+      {
+        move: { from: 'e2', to: 'e4', promotion: undefined },
+        score: { kind: 'cp', value: 35 },
+      },
+    ])
+  })
+
+  it('maps mate scores to comparable cp with faster-mate preference', () => {
+    expect(scoreToComparableCp({ kind: 'cp', value: 120 })).toBe(120)
+    const mate2 = scoreToComparableCp({ kind: 'mate', value: 2 })
+    const mate4 = scoreToComparableCp({ kind: 'mate', value: 4 })
+    const mated1 = scoreToComparableCp({ kind: 'mate', value: -1 })
+    expect(mate2).toBeGreaterThan(mate4)
+    expect(mate4).toBeGreaterThan(5000)
+    expect(mated1).toBeLessThan(-5000)
+    expect(mate2 - mate4).toBe(200)
   })
 
   it('parses info score lines including bound tags', () => {
