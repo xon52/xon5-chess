@@ -42,7 +42,7 @@ The PWA caches local fonts plus Stockfish lite (~7MB WASM). Expect a larger firs
 
 ## Product contract
 
-See [SPEC.md](./SPEC.md) for the play-surface rules (engine, Elo, undo, win%).
+See [SPEC.md](./SPEC.md) for the play-surface rules (engine, difficulty bands, undo, win%).
 
 ## Recommended IDE setup
 

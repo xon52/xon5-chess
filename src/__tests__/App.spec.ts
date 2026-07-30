@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { resetEngine, setEngine } from '@/engine'
+import type { ChessEngine } from '@/engine/types'
 import App from '../App.vue'
 import HomeView from '../views/HomeView.vue'
 import PlayView from '../views/PlayView.vue'
@@ -14,8 +16,33 @@ vi.mock('@tauri-apps/api/core', () => ({
   isTauri: () => false,
 }))
 
+const installEngineMock = () => {
+  const stop = vi.fn()
+  const engine: ChessEngine = {
+    playSearch: vi.fn(async () => null),
+    evalSearch: vi.fn(async () => null),
+    analyzeMove: vi.fn(async () => ({ quality: 'unclassified', move: '' })),
+    notifyNewGame: vi.fn(),
+    stop,
+    stopAndDrain: vi.fn(async () => {
+      stop()
+    }),
+  }
+  setEngine(engine)
+  return engine
+}
+
 describe('App', () => {
-  it('mounts the shell with nav and play route', async () => {
+  beforeEach(() => {
+    localStorage.clear()
+    installEngineMock()
+  })
+
+  afterEach(() => {
+    resetEngine()
+  })
+
+  it('mounts the shell with nav and auto-starts first Play visit', async () => {
     const router = createRouter({
       history: createWebHistory(),
       routes: [
@@ -39,10 +66,11 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Play')
     expect(wrapper.text()).toContain('Stats')
     expect(wrapper.text()).toContain('About')
-    expect(wrapper.text()).toContain('Ready to play')
-    expect(wrapper.text()).toContain('New Game')
-    expect(wrapper.text()).not.toContain('50 / 50')
-    expect(wrapper.text()).not.toContain('Undo')
-    expect(wrapper.text()).not.toContain('Resign')
+    expect(wrapper.text()).toContain('White to move')
+    expect(wrapper.text()).toContain('Resign')
+    expect(wrapper.text()).toContain('Flip')
+    expect(wrapper.text()).not.toContain('Ready to play')
+    expect(localStorage.getItem('xon5.configId')).toBe('beginner')
+    expect(localStorage.getItem('xon5.activeColor')).toBe('w')
   })
 })

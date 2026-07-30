@@ -4,17 +4,10 @@ export type UciMove = {
   promotion?: 'q' | 'r' | 'b' | 'n'
 }
 
-export type SkillDepthCaps = {
-  skill: number
-  depth: number
-}
-
 export type UciScore = {
   kind: 'cp' | 'mate'
   value: number
 }
-
-export type UciEloRange = { min: number; max: number }
 
 /** Ordered setoption / go commands for one search. */
 export type UciCommandPlan = {
@@ -24,28 +17,6 @@ export type UciCommandPlan = {
 
 /** Logistic constant for win% (SPEC §7). */
 export const EVAL_LOGISTIC_K = 400
-
-/**
- * Fallback when UCI_LimitStrength / UCI_Elo are unavailable, or Elo is outside
- * the engine’s UCI_Elo spin range (SPEC §6; includes default 1200 on Stockfish 18
- * lite-single, which advertises UCI_Elo min 1320).
- *
- * | Elo  | Skill | Depth |
- * | ---- | ----- | ----- |
- * | 500  | 0     | 6     |
- * | 1200 | 9     | 11    |
- * | 2000 | 20    | 16    |
- *
- * skill = round((elo - 500) / 1500 * 20) → 0–20
- * depth = round(6 + (elo - 500) / 1500 * 10) → 6–16
- */
-export const eloToSkillDepth = (elo: number): SkillDepthCaps => {
-  const t = (elo - 500) / 1500
-  return {
-    skill: Math.round(t * 20),
-    depth: Math.round(6 + t * 10),
-  }
-}
 
 /** Parse a UCI move token like `e2e4` or `e7e8q`. */
 export const parseUciMove = (token: string): UciMove | null => {
@@ -78,25 +49,6 @@ export const parseBestMoveLine = (line: string): UciMove | null => {
   return parseUciMove(token)
 }
 
-/** Collect option names advertised after `uci` / before `uciok`. */
-export const parseUciOptionName = (line: string): string | null => {
-  const m = /^option name (.+) type /.exec(line.trim())
-  return m?.[1] ?? null
-}
-
-/** Parse `option name UCI_Elo … min N max M` spin bounds. */
-export const parseUciEloRange = (line: string): UciEloRange | null => {
-  if (!line.includes('option name UCI_Elo ')) {
-    return null
-  }
-  const min = / min (-?\d+)/.exec(line)
-  const max = / max (-?\d+)/.exec(line)
-  if (!min || !max) {
-    return null
-  }
-  return { min: Number(min[1]), max: Number(max[1]) }
-}
-
 /** Side to move from a FEN string (field 2). */
 export const fenSideToMove = (fen: string): 'w' | 'b' => {
   const stm = fen.trim().split(/\s+/)[1]
@@ -117,6 +69,122 @@ export const parseInfoScore = (line: string): UciScore | null => {
     return null
   }
   return { kind: m[1] as 'cp' | 'mate', value: Number(m[2]) }
+}
+
+/** One MultiPV info line with a usable first PV move (for play rank sampling). */
+export type MultipvInfoLine = {
+  multipv: number
+  depth: number
+  move: UciMove
+  score: UciScore
+  /** True when the score carries lowerbound/upperbound. */
+  bound: boolean
+}
+
+export type MultipvScoredLine = {
+  move: UciMove
+  score: UciScore
+}
+
+/**
+ * Parse `info … multipv K … depth D … score … pv <move> …`.
+ * Requires multipv + depth + score + pv first-move; returns null otherwise.
+ */
+export const parseMultipvInfoLine = (line: string): MultipvInfoLine | null => {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('info ')) {
+    return null
+  }
+  const multipvMatch = /\bmultipv (\d+)\b/.exec(trimmed)
+  const depthMatch = /\bdepth (\d+)\b/.exec(trimmed)
+  const scoreMatch = /\bscore (cp|mate) (-?\d+)\b/.exec(trimmed)
+  const pvMatch = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)\b/i.exec(trimmed)
+  if (!multipvMatch || !depthMatch || !scoreMatch || !pvMatch) {
+    return null
+  }
+  const move = parseUciMove(pvMatch[1]!)
+  if (!move) {
+    return null
+  }
+  return {
+    multipv: Number(multipvMatch[1]),
+    depth: Number(depthMatch[1]),
+    move,
+    score: { kind: scoreMatch[1] as 'cp' | 'mate', value: Number(scoreMatch[2]) },
+    bound: /\b(lowerbound|upperbound)\b/.test(trimmed),
+  }
+}
+
+export type MultipvAggregatorOptions = {
+  /** When true, skip lowerbound/upperbound score lines (Flair classification). */
+  exactOnly?: boolean
+}
+
+/**
+ * Keep MultiPV lines for the deepest completed depth only.
+ * When depth advances, the prior map is cleared. Returns ranked moves
+ * (index 0 = multipv 1) as a contiguous prefix from multipv 1.
+ */
+export class MultipvAggregator {
+  private maxDepth = 0
+  private byIndex = new Map<number, MultipvScoredLine>()
+  private readonly exactOnly: boolean
+
+  constructor(opts: MultipvAggregatorOptions = {}) {
+    this.exactOnly = opts.exactOnly === true
+  }
+
+  ingest(line: string): void {
+    const parsed = parseMultipvInfoLine(line)
+    if (!parsed) {
+      return
+    }
+    if (this.exactOnly && parsed.bound) {
+      return
+    }
+    if (parsed.depth > this.maxDepth) {
+      this.maxDepth = parsed.depth
+      this.byIndex.clear()
+    }
+    if (parsed.depth === this.maxDepth) {
+      this.byIndex.set(parsed.multipv, { move: parsed.move, score: parsed.score })
+    }
+  }
+
+  /** Contiguous prefix from multipv 1; empty if #1 missing. */
+  rankedLines(): MultipvScoredLine[] {
+    if (!this.byIndex.has(1)) {
+      return []
+    }
+    const out: MultipvScoredLine[] = []
+    for (let i = 1; this.byIndex.has(i); i++) {
+      out.push(this.byIndex.get(i)!)
+    }
+    return out
+  }
+
+  /** Contiguous prefix of moves only (index 0 = multipv 1). */
+  rankedMoves(): UciMove[] {
+    return this.rankedLines().map((line) => line.move)
+  }
+
+  reset(): void {
+    this.maxDepth = 0
+    this.byIndex.clear()
+  }
+}
+
+/** Mate scores sit far above any realistic cp so they dominate swing. */
+export const MATE_COMPARABLE_CP = 100_000
+
+/** Map UCI score to a comparable STM centipawn (mates → large ±sentinels). */
+export const scoreToComparableCp = (score: UciScore): number => {
+  if (score.kind === 'cp') {
+    return score.value
+  }
+  const plies = Math.min(Math.abs(score.value), 99)
+  const magnitude = MATE_COMPARABLE_CP - plies * 100
+  return score.value > 0 ? magnitude : -magnitude
 }
 
 /**
@@ -143,57 +211,35 @@ export const scoreToWhiteBlackPct = (
   return { white, black: 100 - white }
 }
 
-/**
- * True when play can use native UCI_LimitStrength / UCI_Elo.
- * UI Elo is 500–2000 step 50. Stockfish 18 lite-single advertises UCI_Elo min
- * 1320, so Elo below the spin min uses Skill+depth (§6 fallback).
- */
-export const canUseLimitStrengthElo = (
-  elo: number,
-  optionNames: ReadonlySet<string>,
-  uciEloRange: UciEloRange | null,
-): boolean => {
-  if (!optionNames.has('UCI_LimitStrength') || !optionNames.has('UCI_Elo')) {
-    return false
-  }
-  if (uciEloRange && (elo < uciEloRange.min || elo > uciEloRange.max)) {
-    return false
-  }
-  return true
-}
-
-/** Build setoption + go for an Elo-capped play search (SPEC §6). */
-export const planPlaySearch = (
-  elo: number,
-  optionNames: ReadonlySet<string>,
-  uciEloRange: UciEloRange | null,
-  playMovetimeMs: number,
-): UciCommandPlan => {
-  if (canUseLimitStrengthElo(elo, optionNames, uciEloRange)) {
-    return {
-      setOptions: [
-        'setoption name UCI_LimitStrength value true',
-        `setoption name UCI_Elo value ${elo}`,
-      ],
-      go: `go movetime ${playMovetimeMs}`,
-    }
-  }
-  // SPEC §6 fallback (also used when Elo is outside the engine’s UCI_Elo spin range).
-  const { skill, depth } = eloToSkillDepth(elo)
-  return {
-    setOptions: [
-      'setoption name UCI_LimitStrength value false',
-      `setoption name Skill Level value ${skill}`,
-    ],
-    go: `go depth ${depth}`,
-  }
-}
-
-/** Build setoption + go for an uncapped eval search (SPEC §5 / §7). */
+/** Build setoption + go for an uncapped eval search (SPEC §5 / §7). Always MultiPV 1. */
 export const planEvalSearch = (evalMovetimeMs: number): UciCommandPlan => ({
   setOptions: [
     'setoption name UCI_LimitStrength value false',
     'setoption name Skill Level value 20',
+    'setoption name MultiPV value 1',
   ],
   go: `go movetime ${evalMovetimeMs}`,
 })
+
+/** Full-strength MultiPV search (Flair candidates / scoring / analyze). */
+export const planMultipvSearch = (opts: {
+  depth: number
+  multipv: number
+  searchmoves?: string[]
+}): UciCommandPlan => {
+  const depth = Math.max(1, Math.floor(opts.depth))
+  const multipv = Math.max(1, Math.floor(opts.multipv))
+  const moves = (opts.searchmoves ?? []).filter(Boolean)
+  const go =
+    moves.length > 0
+      ? `go depth ${depth} searchmoves ${moves.join(' ')}`
+      : `go depth ${depth}`
+  return {
+    setOptions: [
+      'setoption name UCI_LimitStrength value false',
+      'setoption name Skill Level value 20',
+      `setoption name MultiPV value ${multipv}`,
+    ],
+    go,
+  }
+}

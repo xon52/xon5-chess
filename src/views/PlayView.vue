@@ -4,14 +4,15 @@ import { storeToRefs } from 'pinia'
 
 import ChessBoard from '@/components/ChessBoard.vue'
 import type { BoardMove } from '@/components/ChessBoard.vue'
-import NewGameChooser from '@/components/NewGameChooser.vue'
 import PlayModal from '@/components/PlayModal.vue'
 import PlayMoveHistory from '@/components/PlayMoveHistory.vue'
-import { ELO_DEFAULT, snapElo } from '@/game/elo'
+import { DIFFICULTY_OPTIONS } from '@/engine'
 import { formatStatusText, type PromotionPiece } from '@/play/formatters'
 import { useGameStore } from '@/stores/game'
 
 const game = useGameStore()
+game.startFirstVisitIfNeeded()
+
 const {
   fen,
   turn,
@@ -20,7 +21,7 @@ const {
   legalDests,
   lastMove,
   humanColor,
-  elo,
+  difficultyId,
   isHumanTurn,
   engineThinking,
   orientation,
@@ -30,22 +31,19 @@ const {
   evalSeries,
 } = storeToRefs(game)
 
-type PanelAction = 'idle' | 'chooser' | 'resign-confirm' | 'promote'
+type PanelAction = 'idle' | 'resign-confirm' | 'promote'
 
 const panelAction = ref<PanelAction>('idle')
-const chooserColor = ref<'w' | 'b'>('w')
-const chooserElo = ref(ELO_DEFAULT)
 const pendingPromotion = ref<{ from: string; to: string } | null>(null)
 
 const gameStarted = computed(() => humanColor.value !== null)
 
-/** Terminal checkmate or draw — session still active until New Game Start or Undo-then-Resign. */
+/** Terminal checkmate or draw — session still active until Start or Undo-then-Resign. */
 const gameOver = computed(() => gameStarted.value && status.value.kind !== 'playing')
 
 const showMoves = computed(() => history.value.length > 0)
 
-/** Read-only Elo while a game is active (including resign/promote modals); hide in New Game chooser. */
-const showEloDisplay = computed(() => gameStarted.value && panelAction.value !== 'chooser')
+const canFlip = computed(() => !gameOver.value)
 
 const modalOpen = computed(
   () => panelAction.value === 'resign-confirm' || panelAction.value === 'promote',
@@ -77,10 +75,11 @@ const statusText = computed(() =>
 
 const movableColor = computed(() => (humanColor.value === 'b' ? 'black' : 'white'))
 
-const openChooser = () => {
-  chooserColor.value = 'w'
-  chooserElo.value = elo.value
-  panelAction.value = 'chooser'
+const configOptions = DIFFICULTY_OPTIONS
+
+const onConfigChange = (event: Event) => {
+  const target = event.target as HTMLSelectElement
+  game.setDifficultyId(target.value)
 }
 
 const clearPendingPromotion = () => {
@@ -100,7 +99,7 @@ const cancelPanelAction = () => {
 
 const startNewGame = () => {
   clearPendingPromotion()
-  game.newGame({ color: chooserColor.value, elo: snapElo(chooserElo.value) })
+  game.newGame()
   panelAction.value = 'idle'
 }
 
@@ -115,6 +114,13 @@ const confirmResign = () => {
   clearPendingPromotion()
   game.reset()
   panelAction.value = 'idle'
+}
+
+const onFlip = () => {
+  if (!canFlip.value) {
+    return
+  }
+  game.flipBoard()
 }
 
 /** Undo until it is the human’s turn (store owns ply count / invariant). */
@@ -135,7 +141,6 @@ const onBoardMove = ({ from, to }: BoardMove) => {
     return
   }
   game.tryMove({ from, to })
-  // Store is source of truth; ChessBoard watches fen/dests and snaps back on reject.
 }
 
 const choosePromotion = (piece: PromotionPiece) => {
@@ -169,10 +174,21 @@ const choosePromotion = (piece: PromotionPiece) => {
       <aside class="play__panel">
         <p class="play__status">{{ statusText }}</p>
 
-        <p v-if="showEloDisplay" class="play__elo-display" aria-label="Engine strength">
-          <span class="play__elo-label">Elo</span>
-          <span class="play__elo-value">{{ elo }}</span>
-        </p>
+        <div class="play__engine-controls">
+          <label class="play__difficulty">
+            <span class="play__difficulty-label">Difficulty</span>
+            <select
+              class="play__difficulty-select"
+              :value="difficultyId"
+              aria-label="Difficulty"
+              @change="onConfigChange"
+            >
+              <option v-for="opt in configOptions" :key="opt.id" :value="opt.id">
+                {{ opt.label }}
+              </option>
+            </select>
+          </label>
+        </div>
 
         <PlayMoveHistory
           v-if="showMoves"
@@ -182,22 +198,14 @@ const choosePromotion = (piece: PromotionPiece) => {
           :eval-series="evalSeries"
         />
 
-        <NewGameChooser
-          v-if="panelAction === 'chooser'"
-          v-model:color="chooserColor"
-          v-model:elo="chooserElo"
-          @start="startNewGame"
-          @cancel="cancelPanelAction"
-        />
-
-        <div v-else-if="gameStarted && !modalOpen" class="play__actions">
+        <div v-if="!modalOpen" class="play__actions">
           <button
-            v-if="gameOver"
+            v-if="!gameStarted || gameOver"
             type="button"
             class="play__btn play__btn--active"
-            @click="openChooser"
+            @click="startNewGame"
           >
-            New Game
+            Start
           </button>
           <button
             v-else
@@ -210,17 +218,21 @@ const choosePromotion = (piece: PromotionPiece) => {
           <button
             type="button"
             class="play__btn"
+            :class="{ 'play__btn--active': canFlip }"
+            :disabled="!canFlip"
+            @click="onFlip"
+          >
+            Flip
+          </button>
+          <button
+            v-if="gameStarted"
+            type="button"
+            class="play__btn"
             :class="{ 'play__btn--active': canUndo }"
             :disabled="!canUndo"
             @click="onUndo"
           >
             Undo
-          </button>
-        </div>
-
-        <div v-else-if="!gameStarted" class="play__actions">
-          <button type="button" class="play__btn play__btn--active" @click="openChooser">
-            New Game
           </button>
         </div>
       </aside>
@@ -293,15 +305,19 @@ const choosePromotion = (piece: PromotionPiece) => {
   color: var(--color-ivory);
 }
 
-.play__elo-display {
+.play__engine-controls {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.65rem;
-  margin: 0;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.play__elo-label {
+.play__difficulty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.play__difficulty-label {
   margin: 0;
   font-size: 0.8rem;
   font-weight: 600;
@@ -310,21 +326,34 @@ const choosePromotion = (piece: PromotionPiece) => {
   color: var(--color-ivory-muted);
 }
 
-.play__elo-value {
-  font-variant-numeric: tabular-nums;
-  min-width: 2.5rem;
-  text-align: right;
+.play__difficulty-select {
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid rgb(232 220 200 / 0.28);
+  border-radius: 0;
+  background: var(--color-felt-deep);
+  color: var(--color-ivory);
+  color-scheme: dark;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.play__difficulty-select option {
+  background: var(--color-ink);
   color: var(--color-ivory);
 }
 
 .play__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 0.25rem;
 }
 
 .play__btn {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 4.5rem;
   padding: 0.55rem 0.75rem;
   border: 1px solid rgb(232 220 200 / 0.28);
   border-radius: 0;

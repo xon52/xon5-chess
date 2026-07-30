@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  canUseLimitStrengthElo,
-  eloToSkillDepth,
   fenSideToMove,
+  MultipvAggregator,
   parseBestMoveLine,
   parseInfoScore,
-  parseUciEloRange,
+  parseMultipvInfoLine,
   parseUciMove,
-  parseUciOptionName,
   planEvalSearch,
-  planPlaySearch,
+  planMultipvSearch,
+  scoreToComparableCp,
   scoreToWhiteBlackPct,
 } from '@/engine/uci'
 
@@ -40,79 +39,33 @@ describe('uci helpers', () => {
     expect(parseBestMoveLine('info depth 12')).toBeNull()
   })
 
-  it('parses UCI option names', () => {
-    expect(parseUciOptionName('option name UCI_Elo type spin default 1320 min 1320 max 3190')).toBe(
-      'UCI_Elo',
-    )
-    expect(parseUciOptionName('option name Skill Level type spin default 20 min 0 max 20')).toBe(
-      'Skill Level',
-    )
-    expect(parseUciOptionName('uciok')).toBeNull()
-  })
-
-  it('parses UCI_Elo min/max spin range', () => {
-    expect(
-      parseUciEloRange('option name UCI_Elo type spin default 1320 min 1320 max 3190'),
-    ).toEqual({ min: 1320, max: 3190 })
-    expect(parseUciEloRange('option name Skill Level type spin default 20 min 0 max 20')).toBeNull()
-    expect(parseUciEloRange('option name UCI_Elo type spin default 1320')).toBeNull()
-  })
-
-  it('maps Elo to Skill + depth fallback table values', () => {
-    expect(eloToSkillDepth(500)).toEqual({ skill: 0, depth: 6 })
-    expect(eloToSkillDepth(1200)).toEqual({ skill: 9, depth: 11 })
-    expect(eloToSkillDepth(2000)).toEqual({ skill: 20, depth: 16 })
-  })
-
-  it('decides LimitStrength vs Skill+depth from options and Elo range', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo', 'Skill Level'])
-    const range = { min: 1320, max: 3190 }
-
-    expect(canUseLimitStrengthElo(1500, options, range)).toBe(true)
-    expect(canUseLimitStrengthElo(1200, options, range)).toBe(false)
-    expect(canUseLimitStrengthElo(500, options, range)).toBe(false)
-    expect(canUseLimitStrengthElo(1500, new Set(['Skill Level']), range)).toBe(false)
-    expect(canUseLimitStrengthElo(1500, options, null)).toBe(true)
-  })
-
-  it('plans LimitStrength play when Elo is in range', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo'])
-    expect(planPlaySearch(1500, options, { min: 1320, max: 3190 }, 1000)).toEqual({
-      setOptions: [
-        'setoption name UCI_LimitStrength value true',
-        'setoption name UCI_Elo value 1500',
-      ],
-      go: 'go movetime 1000',
-    })
-  })
-
-  it('plans Skill+depth play below UCI_Elo min (including default 1200)', () => {
-    const options = new Set(['UCI_LimitStrength', 'UCI_Elo', 'Skill Level'])
-    const range = { min: 1320, max: 3190 }
-
-    expect(planPlaySearch(1200, options, range, 1000)).toEqual({
-      setOptions: [
-        'setoption name UCI_LimitStrength value false',
-        'setoption name Skill Level value 9',
-      ],
-      go: 'go depth 11',
-    })
-    expect(planPlaySearch(500, options, range, 1000)).toEqual({
-      setOptions: [
-        'setoption name UCI_LimitStrength value false',
-        'setoption name Skill Level value 0',
-      ],
-      go: 'go depth 6',
-    })
-  })
-
-  it('plans uncapped eval search', () => {
+  it('plans uncapped eval search with MultiPV 1', () => {
     expect(planEvalSearch(500)).toEqual({
       setOptions: [
         'setoption name UCI_LimitStrength value false',
         'setoption name Skill Level value 20',
+        'setoption name MultiPV value 1',
       ],
       go: 'go movetime 500',
+    })
+  })
+
+  it('plans Flair MultiPV search at Skill 20', () => {
+    expect(planMultipvSearch({ depth: 8, multipv: 12 })).toEqual({
+      setOptions: [
+        'setoption name UCI_LimitStrength value false',
+        'setoption name Skill Level value 20',
+        'setoption name MultiPV value 12',
+      ],
+      go: 'go depth 8',
+    })
+    expect(planMultipvSearch({ depth: 8, multipv: 3, searchmoves: ['e2e4', 'd5c6'] })).toEqual({
+      setOptions: [
+        'setoption name UCI_LimitStrength value false',
+        'setoption name Skill Level value 20',
+        'setoption name MultiPV value 3',
+      ],
+      go: 'go depth 8 searchmoves e2e4 d5c6',
     })
   })
 
@@ -121,6 +74,67 @@ describe('uci helpers', () => {
       fenSideToMove('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'),
     ).toBe('b')
     expect(fenSideToMove(DEFAULT_POSITION)).toBe('w')
+  })
+
+  it('parses multipv info lines and aggregates by max depth', () => {
+    expect(
+      parseMultipvInfoLine('info depth 4 multipv 2 score cp 10 pv d2d4 e7e5'),
+    ).toEqual({
+      multipv: 2,
+      depth: 4,
+      move: { from: 'd2', to: 'd4', promotion: undefined },
+      score: { kind: 'cp', value: 10 },
+      bound: false,
+    })
+    expect(parseMultipvInfoLine('info depth 4 score cp 10 pv e2e4')).toBeNull()
+
+    const agg = new MultipvAggregator()
+    agg.ingest('info depth 3 multipv 1 score cp 20 pv e2e4')
+    agg.ingest('info depth 3 multipv 2 score cp 10 pv d2d4')
+    agg.ingest('info depth 4 multipv 1 score cp 25 pv e2e4')
+    // Stale multipv 2 at depth 3 must not appear; missing #2 at depth 4 → prefix of 1.
+    expect(agg.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
+    expect(agg.rankedLines()).toEqual([
+      {
+        move: { from: 'e2', to: 'e4', promotion: undefined },
+        score: { kind: 'cp', value: 25 },
+      },
+    ])
+    agg.ingest('info depth 4 multipv 2 score cp 12 pv d2d4')
+    expect(agg.rankedMoves()).toEqual([
+      { from: 'e2', to: 'e4', promotion: undefined },
+      { from: 'd2', to: 'd4', promotion: undefined },
+    ])
+    // Gap at multipv 2 stops contiguous prefix.
+    const gappy = new MultipvAggregator()
+    gappy.ingest('info depth 5 multipv 1 score cp 1 pv e2e4')
+    gappy.ingest('info depth 5 multipv 3 score cp 0 pv c2c4')
+    expect(gappy.rankedMoves()).toEqual([{ from: 'e2', to: 'e4', promotion: undefined }])
+  })
+
+  it('exactOnly aggregator skips bound-tagged MultiPV scores', () => {
+    const agg = new MultipvAggregator({ exactOnly: true })
+    agg.ingest('info depth 4 multipv 1 score cp 40 lowerbound pv e2e4')
+    expect(agg.rankedLines()).toEqual([])
+    agg.ingest('info depth 4 multipv 1 score cp 35 pv e2e4')
+    agg.ingest('info depth 4 multipv 2 score cp 10 upperbound pv d2d4')
+    expect(agg.rankedLines()).toEqual([
+      {
+        move: { from: 'e2', to: 'e4', promotion: undefined },
+        score: { kind: 'cp', value: 35 },
+      },
+    ])
+  })
+
+  it('maps mate scores to comparable cp with faster-mate preference', () => {
+    expect(scoreToComparableCp({ kind: 'cp', value: 120 })).toBe(120)
+    const mate2 = scoreToComparableCp({ kind: 'mate', value: 2 })
+    const mate4 = scoreToComparableCp({ kind: 'mate', value: 4 })
+    const mated1 = scoreToComparableCp({ kind: 'mate', value: -1 })
+    expect(mate2).toBeGreaterThan(mate4)
+    expect(mate4).toBeGreaterThan(5000)
+    expect(mated1).toBeLessThan(-5000)
+    expect(mate2 - mate4).toBe(200)
   })
 
   it('parses info score lines including bound tags', () => {
