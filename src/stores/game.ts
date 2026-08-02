@@ -5,12 +5,14 @@ import { Chess, type Color, type Square } from 'chess.js'
 import {
   fenSideToMove,
   getEngine,
+  getFlairMatchLog,
   printFlairMatchStats,
   recentMovesFromChess,
   recordFlairMove,
   resetFlairMatchLog,
   resolveDifficultyId,
   scoreToWhiteBlackPct,
+  type FlairLogQuality,
 } from '@/engine'
 import {
   buildLegalDests,
@@ -18,19 +20,32 @@ import {
   getLastMove,
   isPromotionMove as chessIsPromotionMove,
 } from '@/game/board'
+import { capturesBySide, type CapturedPiece } from '@/game/captures'
 import {
   DEFAULT_DIFFICULTY_ID,
   hasStoredPrefs,
   loadPrefs,
   saveActiveColor,
+  saveBoardTheme,
   saveDifficultyId,
+  savePanelOpen,
+  savePanelPinned,
+  saveShowMoveQualities,
   seedDefaultPrefs,
   type ActiveColor,
+  type BoardTheme,
 } from '@/game/prefs'
 import { deriveStatus, type GameStatus } from '@/game/status'
+import {
+  randomThinkTargetMs,
+  remainingThinkPadMs,
+  sleepMs,
+} from '@/game/thinkDelay'
 
 export type { GameStatus } from '@/game/status'
-export type { ActiveColor } from '@/game/prefs'
+export type { ActiveColor, BoardTheme } from '@/game/prefs'
+export type { CapturedPiece } from '@/game/captures'
+export type { FlairLogQuality }
 
 export type TryMoveInput = {
   from: Square | string
@@ -40,6 +55,13 @@ export type TryMoveInput = {
 
 export type TryMoveResult = { ok: true; san: string } | { ok: false }
 
+export type HintMove = {
+  from: string
+  to: string
+  promotion?: 'q' | 'r' | 'b' | 'n'
+  piece: string
+}
+
 export const useGameStore = defineStore('game', () => {
   const prefs = loadPrefs()
   const chess = new Chess()
@@ -47,15 +69,23 @@ export const useGameStore = defineStore('game', () => {
   const fen = ref(chess.fen())
   const turn = ref<Color>(chess.turn())
   const history = ref<string[]>([])
+  const moveQualities = ref<FlairLogQuality[]>([])
   const status = ref<GameStatus>({ kind: 'playing' })
   const humanColor = ref<'w' | 'b' | null>(null)
   const activeColor = ref<ActiveColor>(prefs.activeColor)
   const difficultyId = ref<string>(prefs.difficultyId)
+  const boardTheme = ref<BoardTheme>(prefs.boardTheme)
+  const panelPinned = ref(prefs.panelPinned)
+  const panelOpen = ref(prefs.panelOpen)
+  const showMoveQualities = ref(prefs.showMoveQualities)
   const engineThinking = ref(false)
+  const hintThinking = ref(false)
+  const hintMove = ref<HintMove | null>(null)
   const whiteWinPct = ref<number | null>(null)
   const evalPctByHistoryLength = ref(new Map<number, number>())
   let playSearchGeneration = 0
   let evalSearchGeneration = 0
+  let hintSearchGeneration = 0
 
   const blackWinPct = computed(() =>
     whiteWinPct.value === null ? null : 100 - whiteWinPct.value,
@@ -71,6 +101,25 @@ export const useGameStore = defineStore('game', () => {
     }
     return points.sort((a, b) => a.ply - b.ply)
   })
+
+  const capturedPieces = computed(() => {
+    void fen.value
+    return capturesBySide(chess)
+  })
+
+  /** Pieces the human lost (left) and opponent lost (right). */
+  const captureTrays = computed((): { left: CapturedPiece[]; right: CapturedPiece[] } => {
+    const caps = capturedPieces.value
+    const human = humanColor.value ?? activeColor.value
+    const opp: Color = human === 'w' ? 'b' : 'w'
+    return { left: caps[human], right: caps[opp] }
+  })
+
+  const clearHint = () => {
+    hintSearchGeneration++
+    hintMove.value = null
+    hintThinking.value = false
+  }
 
   const bumpEvalSearchGeneration = () => {
     evalSearchGeneration++
@@ -97,11 +146,35 @@ export const useGameStore = defineStore('game', () => {
     whiteWinPct.value = null
   }
 
+  const trimMoveQualities = () => {
+    if (moveQualities.value.length > history.value.length) {
+      moveQualities.value = moveQualities.value.slice(0, history.value.length)
+    }
+  }
+
+  const setMoveQualityAt = (index: number, quality: FlairLogQuality) => {
+    const next = moveQualities.value.slice()
+    while (next.length < index) {
+      next.push('unclassified')
+    }
+    if (next.length === index) {
+      next.push(quality)
+    } else {
+      next[index] = quality
+    }
+    moveQualities.value = next
+  }
+
+  const pushMoveQuality = (quality: FlairLogQuality) => {
+    moveQualities.value = [...moveQualities.value, quality]
+  }
+
   const syncFromChess = () => {
     fen.value = chess.fen()
     turn.value = chess.turn()
     history.value = chess.history()
     status.value = deriveStatus(chess)
+    trimMoveQualities()
   }
 
   const invalidatePlaySearch = (): Promise<void> => {
@@ -174,15 +247,26 @@ export const useGameStore = defineStore('game', () => {
 
     const generation = ++playSearchGeneration
     bumpEvalSearchGeneration()
+    clearHint()
     engineThinking.value = true
     const positionFen = fen.value
     const engine = getEngine()
     const difficulty = difficultyId.value
     const recentMoves = recentMovesFromChess(chess)
+    const startedAt = performance.now()
+    const thinkTarget =
+      import.meta.env.MODE === 'test' ? 0 : randomThinkTargetMs()
 
     void engine
       .playSearch({ fen: positionFen, difficultyId: difficulty, recentMoves })
-      .then((move) => {
+      .then(async (move) => {
+        if (generation !== playSearchGeneration) {
+          return
+        }
+        const pad = remainingThinkPadMs(performance.now() - startedAt, thinkTarget)
+        if (pad > 0) {
+          await sleepMs(pad)
+        }
         if (generation !== playSearchGeneration) {
           return
         }
@@ -201,6 +285,11 @@ export const useGameStore = defineStore('game', () => {
         if (!result.ok) {
           console.warn('[game] illegal engine bestmove ignored', move)
         } else {
+          const log = getFlairMatchLog()
+          const last = log[log.length - 1]
+          pushMoveQuality(
+            last?.side === 'computer' ? last.quality : 'unclassified',
+          )
           bumpEvalSearchGeneration()
           if (status.value.kind !== 'playing') {
             printFlairMatchStats()
@@ -229,6 +318,7 @@ export const useGameStore = defineStore('game', () => {
         to: input.to,
         promotion: input.promotion,
       })
+      clearHint()
       syncFromChess()
       return { ok: true, san: move.san }
     } catch {
@@ -247,6 +337,8 @@ export const useGameStore = defineStore('game', () => {
       return result
     }
 
+    const qualityIndex = history.value.length - 1
+    setMoveQualityAt(qualityIndex, 'unclassified')
     bumpEvalSearchGeneration()
 
     const afterHuman = () => {
@@ -271,6 +363,9 @@ export const useGameStore = defineStore('game', () => {
       .analyzeMove(fenBefore, move)
       .then((analysis) => {
         recordFlairMove({ side: 'human', ...analysis })
+        if (history.value.length > qualityIndex) {
+          setMoveQualityAt(qualityIndex, analysis.quality)
+        }
       })
       .catch((err) => {
         console.error('[flair] human analyze failed', err)
@@ -323,12 +418,15 @@ export const useGameStore = defineStore('game', () => {
     const drain = invalidatePlaySearch()
     bumpEvalSearchGeneration()
     resetFlairMatchLog()
+    clearHint()
 
     do {
       if (!undoPly()) {
         break
       }
     } while (history.value.length > 0 && turn.value !== color)
+
+    moveQualities.value = moveQualities.value.slice(0, history.value.length)
 
     if (turn.value === color) {
       restoreEvalPct()
@@ -373,6 +471,30 @@ export const useGameStore = defineStore('game', () => {
       })
   }
 
+  const setBoardTheme = (theme: BoardTheme) => {
+    boardTheme.value = theme
+    saveBoardTheme(theme)
+  }
+
+  const setPanelPinned = (pinned: boolean) => {
+    panelPinned.value = pinned
+    savePanelPinned(pinned)
+    if (pinned) {
+      panelOpen.value = true
+      savePanelOpen(true)
+    }
+  }
+
+  const setPanelOpen = (open: boolean) => {
+    panelOpen.value = open
+    savePanelOpen(open)
+  }
+
+  const setShowMoveQualities = (show: boolean) => {
+    showMoveQualities.value = show
+    saveShowMoveQualities(show)
+  }
+
   const flipBoard = () => {
     if (humanColor.value !== null && status.value.kind !== 'playing') {
       return
@@ -403,8 +525,10 @@ export const useGameStore = defineStore('game', () => {
     bumpEvalSearchGeneration()
     clearEvalHistory()
     resetFlairMatchLog()
+    clearHint()
     chess.reset()
     humanColor.value = null
+    moveQualities.value = []
     syncFromChess()
   }
 
@@ -413,8 +537,10 @@ export const useGameStore = defineStore('game', () => {
     bumpEvalSearchGeneration()
     clearEvalHistory()
     resetFlairMatchLog()
+    clearHint()
     chess.reset()
     humanColor.value = activeColor.value
+    moveQualities.value = []
     syncFromChess()
     void drain.then(() => {
       getEngine().notifyNewGame()
@@ -424,6 +550,26 @@ export const useGameStore = defineStore('game', () => {
     })
   }
 
+  /**
+   * Ensure a game is in progress on Play mount: seed defaults if needed,
+   * then start with last (or default) settings when idle.
+   */
+  const ensurePlaySession = (): boolean => {
+    let seeded = false
+    if (!hasStoredPrefs()) {
+      activeColor.value = 'w'
+      difficultyId.value = DEFAULT_DIFFICULTY_ID
+      seedDefaultPrefs()
+      seeded = true
+    }
+    if (humanColor.value === null) {
+      newGame()
+      return true
+    }
+    return seeded
+  }
+
+  /** @deprecated Prefer ensurePlaySession — kept for existing tests. */
   const startFirstVisitIfNeeded = (): boolean => {
     if (hasStoredPrefs()) {
       return false
@@ -436,6 +582,49 @@ export const useGameStore = defineStore('game', () => {
       return true
     }
     return false
+  }
+
+  const requestHint = () => {
+    if (
+      humanColor.value === null ||
+      status.value.kind !== 'playing' ||
+      !isHumanTurn.value ||
+      engineThinking.value ||
+      hintThinking.value
+    ) {
+      return
+    }
+
+    const generation = ++hintSearchGeneration
+    hintThinking.value = true
+    const positionFen = fen.value
+
+    void getEngine()
+      .hintSearch({ fen: positionFen })
+      .then((move) => {
+        if (generation !== hintSearchGeneration) {
+          return
+        }
+        if (!move) {
+          hintMove.value = null
+          return
+        }
+        const piece = chess.get(move.from as Square)
+        hintMove.value = {
+          from: move.from,
+          to: move.to,
+          promotion: move.promotion,
+          piece: piece?.type ?? 'p',
+        }
+      })
+      .catch((err) => {
+        console.error('[game] hint search failed', err)
+      })
+      .finally(() => {
+        if (generation === hintSearchGeneration) {
+          hintThinking.value = false
+        }
+      })
   }
 
   const loadFen = (fenString: string): boolean => {
@@ -452,14 +641,22 @@ export const useGameStore = defineStore('game', () => {
     fen,
     turn,
     history,
+    moveQualities,
     status,
     humanColor,
     activeColor,
     difficultyId,
+    boardTheme,
+    panelPinned,
+    panelOpen,
+    showMoveQualities,
     engineThinking,
+    hintThinking,
+    hintMove,
     whiteWinPct,
     blackWinPct,
     evalSeries,
+    captureTrays,
     isHumanTurn,
     orientation,
     legalDests,
@@ -472,10 +669,17 @@ export const useGameStore = defineStore('game', () => {
     undoPlies,
     undoUntilHumanTurn,
     setDifficultyId,
+    setBoardTheme,
+    setPanelPinned,
+    setPanelOpen,
+    setShowMoveQualities,
     flipBoard,
     reset,
     newGame,
+    ensurePlaySession,
     startFirstVisitIfNeeded,
+    requestHint,
+    clearHint,
     loadFen,
     requestEngineMove,
     requestEvalSearch,

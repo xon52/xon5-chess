@@ -5,10 +5,12 @@ import { mount } from '@vue/test-utils'
 import PlayMoveHistory from '@/components/PlayMoveHistory.vue'
 
 describe('PlayMoveHistory', () => {
-  it('renders figurine plies horizontally with SAN aria-labels', () => {
+  it('renders figurine plies vertically with SAN aria-labels', () => {
     const wrapper = mount(PlayMoveHistory, {
       props: {
         history: ['e4', 'e5', 'Nf3'],
+        moveQualities: ['good', 'good', 'great'],
+        showMoveQualities: true,
         whiteWinPct: null,
         blackWinPct: null,
         evalSeries: [],
@@ -16,16 +18,38 @@ describe('PlayMoveHistory', () => {
     })
 
     const items = wrapper.findAll('.play__history-sans li')
-    expect(items.map((li) => li.text())).toEqual(['♙e4', '♟e5', '♘f3'])
+    expect(items.map((li) => li.find('.ply__san').text())).toEqual([
+      '♙e4',
+      '♟e5',
+      '♘f3',
+    ])
     expect(items.map((li) => li.attributes('aria-label'))).toEqual(['e4', 'e5', 'Nf3'])
     expect(items[0]!.classes()).toContain('ply--w')
     expect(items[1]!.classes()).toContain('ply--b')
+    expect(items[2]!.find('.ply__quality').text()).toBe('↑')
+  })
+
+  it('hides quality icons when toggled off', () => {
+    const wrapper = mount(PlayMoveHistory, {
+      props: {
+        history: ['e4'],
+        moveQualities: ['blunder'],
+        showMoveQualities: false,
+        whiteWinPct: null,
+        blackWinPct: null,
+        evalSeries: [],
+      },
+    })
+
+    expect(wrapper.find('.ply__quality').exists()).toBe(false)
   })
 
   it('shows win-chance title and chart when history has ≥2 plies', () => {
     const wrapper = mount(PlayMoveHistory, {
       props: {
         history: ['e4', 'e5'],
+        moveQualities: [],
+        showMoveQualities: true,
         whiteWinPct: null,
         blackWinPct: null,
         evalSeries: [],
@@ -40,6 +64,8 @@ describe('PlayMoveHistory', () => {
     const wrapper = mount(PlayMoveHistory, {
       props: {
         history: ['e4'],
+        moveQualities: [],
+        showMoveQualities: true,
         whiteWinPct: null,
         blackWinPct: null,
         evalSeries: [],
@@ -54,6 +80,8 @@ describe('PlayMoveHistory', () => {
     const wrapper = mount(PlayMoveHistory, {
       props: {
         history: ['e4', 'e5', 'Nf3', 'Nc6'],
+        moveQualities: [],
+        showMoveQualities: true,
         whiteWinPct: 62,
         blackWinPct: 38,
         evalSeries: [
@@ -72,6 +100,8 @@ describe('PlayMoveHistory', () => {
     const wrapper = mount(PlayMoveHistory, {
       props: {
         history: ['e4'],
+        moveQualities: [],
+        showMoveQualities: true,
         whiteWinPct: null,
         blackWinPct: null,
         evalSeries: [],
@@ -80,15 +110,13 @@ describe('PlayMoveHistory', () => {
     })
 
     const list = wrapper.find('.play__history-list').element as HTMLElement
-    Object.defineProperty(list, 'scrollWidth', { configurable: true, value: 240 })
-    list.scrollLeft = 0
+    Object.defineProperty(list, 'scrollHeight', { value: 400, configurable: true })
+    Object.defineProperty(list, 'clientHeight', { value: 100, configurable: true })
 
-    await wrapper.setProps({
-      history: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'],
-    })
+    await wrapper.setProps({ history: ['e4', 'e5', 'Nf3'] })
     await nextTick()
+    expect(list.scrollTop).toBe(list.scrollHeight)
 
-    expect(list.scrollLeft).toBe(240)
     wrapper.unmount()
   })
 })

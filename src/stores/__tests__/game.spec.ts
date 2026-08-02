@@ -5,12 +5,14 @@ import { DEFAULT_POSITION } from 'chess.js'
 import { resetEngine, setEngine } from '@/engine'
 import type { ChessEngine } from '@/engine/types'
 import type { UciMove, UciScore } from '@/engine/uci'
+import { saveActiveColor, saveDifficultyId } from '@/game/prefs'
 import { useGameStore } from '../game'
 
 type MockBundle = {
   engine: ChessEngine
   playSearch: ReturnType<typeof vi.fn>
   evalSearch: ReturnType<typeof vi.fn>
+  hintSearch: ReturnType<typeof vi.fn>
   analyzeMove: ReturnType<typeof vi.fn>
   notifyNewGame: ReturnType<typeof vi.fn>
   stop: ReturnType<typeof vi.fn>
@@ -21,6 +23,7 @@ const installEngineMock = (
   partial: Partial<{
     playSearch: ChessEngine['playSearch']
     evalSearch: ChessEngine['evalSearch']
+    hintSearch: ChessEngine['hintSearch']
     analyzeMove: ChessEngine['analyzeMove']
     notifyNewGame: ChessEngine['notifyNewGame']
     stop: ChessEngine['stop']
@@ -35,6 +38,7 @@ const installEngineMock = (
     })
   const playSearch = (partial.playSearch as ReturnType<typeof vi.fn> | undefined) ?? vi.fn(async () => null)
   const evalSearch = (partial.evalSearch as ReturnType<typeof vi.fn> | undefined) ?? vi.fn(async () => null)
+  const hintSearch = (partial.hintSearch as ReturnType<typeof vi.fn> | undefined) ?? vi.fn(async () => null)
   const analyzeMove =
     (partial.analyzeMove as ReturnType<typeof vi.fn> | undefined) ??
     vi.fn(async () => ({ quality: 'unclassified' as const, move: '' }))
@@ -43,13 +47,14 @@ const installEngineMock = (
   const engine: ChessEngine = {
     playSearch,
     evalSearch,
+    hintSearch,
     analyzeMove,
     notifyNewGame,
     stop,
     stopAndDrain,
   }
   setEngine(engine)
-  return { engine, playSearch, evalSearch, analyzeMove, notifyNewGame, stop, stopAndDrain }
+  return { engine, playSearch, evalSearch, hintSearch, analyzeMove, notifyNewGame, stop, stopAndDrain }
 }
 
 describe('useGameStore', () => {
@@ -231,6 +236,20 @@ describe('useGameStore', () => {
     expect(localStorage.getItem('xon5.configId')).toBe('beginner')
     expect(localStorage.getItem('xon5.activeColor')).toBe('w')
     expect(store.startFirstVisitIfNeeded()).toBe(false)
+  })
+
+  it('ensurePlaySession starts with last prefs when idle', () => {
+    localStorage.clear()
+    saveDifficultyId('club')
+    saveActiveColor('b')
+    setActivePinia(createPinia())
+    installEngineMock()
+    const store = useGameStore()
+
+    expect(store.ensurePlaySession()).toBe(true)
+    expect(store.humanColor).toBe('b')
+    expect(store.difficultyId).toBe('club')
+    expect(store.ensurePlaySession()).toBe(false)
   })
 
   it('rejects Black tryMove after a White human ply', () => {

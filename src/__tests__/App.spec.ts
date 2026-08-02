@@ -21,6 +21,7 @@ const installEngineMock = () => {
   const engine: ChessEngine = {
     playSearch: vi.fn(async () => null),
     evalSearch: vi.fn(async () => null),
+    hintSearch: vi.fn(async () => null),
     analyzeMove: vi.fn(async () => ({ quality: 'unclassified', move: '' })),
     notifyNewGame: vi.fn(),
     stop,
