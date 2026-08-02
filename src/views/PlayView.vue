@@ -1,47 +1,55 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import BoardHintArrow from '@/components/BoardHintArrow.vue'
 import ChessBoard from '@/components/ChessBoard.vue'
 import type { BoardMove } from '@/components/ChessBoard.vue'
+import PlayEndgame from '@/components/PlayEndgame.vue'
 import PlayModal from '@/components/PlayModal.vue'
-import PlayMoveHistory from '@/components/PlayMoveHistory.vue'
-import { DIFFICULTY_OPTIONS } from '@/engine'
+import PlaySidePanel from '@/components/PlaySidePanel.vue'
 import { formatStatusText, type PromotionPiece } from '@/play/formatters'
 import { useGameStore } from '@/stores/game'
 
 const game = useGameStore()
-game.startFirstVisitIfNeeded()
+game.ensurePlaySession()
 
 const {
   fen,
   turn,
   history,
+  moveQualities,
   status,
   legalDests,
   lastMove,
   humanColor,
   difficultyId,
+  boardTheme,
+  panelPinned,
+  panelOpen,
+  showMoveQualities,
   isHumanTurn,
   engineThinking,
+  hintThinking,
+  hintMove,
   orientation,
   canUndo,
   whiteWinPct,
   blackWinPct,
   evalSeries,
+  captureTrays,
 } = storeToRefs(game)
 
 type PanelAction = 'idle' | 'resign-confirm' | 'promote'
 
 const panelAction = ref<PanelAction>('idle')
 const pendingPromotion = ref<{ from: string; to: string } | null>(null)
+const endgameDismissed = ref(false)
 
 const gameStarted = computed(() => humanColor.value !== null)
 
 /** Terminal checkmate or draw — session still active until Start or Undo-then-Resign. */
 const gameOver = computed(() => gameStarted.value && status.value.kind !== 'playing')
-
-const showMoves = computed(() => history.value.length > 0)
 
 const canFlip = computed(() => !gameOver.value)
 
@@ -53,13 +61,34 @@ const modalMode = computed(() =>
   panelAction.value === 'promote' ? ('promote' as const) : ('resign-confirm' as const),
 )
 
+const endgameKind = computed((): 'win' | 'loss' | 'draw' | null => {
+  if (!gameOver.value || endgameDismissed.value) {
+    return null
+  }
+  const s = status.value
+  if (s.kind === 'draw') {
+    return 'draw'
+  }
+  if (s.kind === 'checkmate' && humanColor.value) {
+    return s.winner === humanColor.value ? 'win' : 'loss'
+  }
+  return null
+})
+
+watch(gameOver, (over) => {
+  if (!over) {
+    endgameDismissed.value = false
+  }
+})
+
 /** Lock input on engine turn / think, when the game is over, and while a blocking modal is open. */
 const boardLocked = computed(
   () =>
     !isHumanTurn.value ||
     engineThinking.value ||
     gameOver.value ||
-    modalOpen.value,
+    modalOpen.value ||
+    endgameKind.value !== null,
 )
 
 /** Promoting side keeps the cburnett icons matching the human’s pieces. */
@@ -75,12 +104,24 @@ const statusText = computed(() =>
 
 const movableColor = computed(() => (humanColor.value === 'b' ? 'black' : 'white'))
 
-const configOptions = DIFFICULTY_OPTIONS
+const canHint = computed(
+  () =>
+    gameStarted.value &&
+    !gameOver.value &&
+    isHumanTurn.value &&
+    !engineThinking.value &&
+    !hintThinking.value &&
+    !modalOpen.value,
+)
 
-const onConfigChange = (event: Event) => {
-  const target = event.target as HTMLSelectElement
-  game.setDifficultyId(target.value)
-}
+const mateSideClass = computed(() => {
+  if (status.value.kind !== 'checkmate') {
+    return null
+  }
+  return status.value.winner === 'w' ? 'play__board--mate-b' : 'play__board--mate-w'
+})
+
+const panelVisible = computed(() => panelPinned.value || panelOpen.value)
 
 const clearPendingPromotion = () => {
   pendingPromotion.value = null
@@ -99,12 +140,13 @@ const cancelPanelAction = () => {
 
 const startNewGame = () => {
   clearPendingPromotion()
+  endgameDismissed.value = false
   game.newGame()
   panelAction.value = 'idle'
 }
 
 const openResignConfirm = () => {
-  if (modalOpen.value || gameOver.value) {
+  if (modalOpen.value || gameOver.value || endgameKind.value) {
     return
   }
   panelAction.value = 'resign-confirm'
@@ -123,12 +165,16 @@ const onFlip = () => {
   game.flipBoard()
 }
 
-/** Undo until it is the human’s turn (store owns ply count / invariant). */
 const onUndo = () => {
   if (modalOpen.value) {
     return
   }
+  endgameDismissed.value = true
   game.undoUntilHumanTurn()
+}
+
+const onHint = () => {
+  game.requestHint()
 }
 
 const onBoardMove = ({ from, to }: BoardMove) => {
@@ -153,89 +199,96 @@ const choosePromotion = (piece: PromotionPiece) => {
     clearPendingPromotion()
   }
 }
+
+const dismissEndgame = () => {
+  endgameDismissed.value = true
+  startNewGame()
+}
 </script>
 
 <template>
-  <main class="play">
-    <div class="play__stage">
-      <div class="play__board" aria-label="Chess board">
-        <ChessBoard
-          :fen="fen"
-          :turn="turn"
-          :orientation="orientation"
-          :dests="legalDests"
-          :last-move="lastMove"
-          :view-only="boardLocked"
-          :movable-color="movableColor"
-          @move="onBoardMove"
-        />
+  <main class="play" :class="{ 'play--pinned': panelPinned && panelVisible }">
+    <div
+      class="play__stage"
+      :class="{ 'play__stage--pinned': panelPinned && panelVisible }"
+    >
+      <div class="play__board-column">
+        <div
+          class="play__board"
+          :class="[
+            boardTheme === 'grey' ? 'board-theme-grey' : 'board-theme-classic',
+            mateSideClass,
+          ]"
+          aria-label="Chess board"
+        >
+          <div class="play__board-surface">
+            <ChessBoard
+              :fen="fen"
+              :turn="turn"
+              :orientation="orientation"
+              :dests="legalDests"
+              :last-move="lastMove"
+              :view-only="boardLocked"
+              :movable-color="movableColor"
+              @move="onBoardMove"
+            />
+            <BoardHintArrow
+              v-if="hintMove"
+              :from="hintMove.from"
+              :to="hintMove.to"
+              :piece="hintMove.piece"
+              :orientation="orientation"
+            />
+            <PlayEndgame
+              v-if="endgameKind"
+              :kind="endgameKind"
+              @dismiss="dismissEndgame"
+            />
+          </div>
+        </div>
       </div>
 
-      <aside class="play__panel">
-        <p class="play__status">{{ statusText }}</p>
-
-        <div class="play__engine-controls">
-          <label class="play__difficulty">
-            <span class="play__difficulty-label">Difficulty</span>
-            <select
-              class="play__difficulty-select"
-              :value="difficultyId"
-              aria-label="Difficulty"
-              @change="onConfigChange"
-            >
-              <option v-for="opt in configOptions" :key="opt.id" :value="opt.id">
-                {{ opt.label }}
-              </option>
-            </select>
-          </label>
-        </div>
-
-        <PlayMoveHistory
-          v-if="showMoves"
+      <div
+        class="play__drawer"
+        :class="{
+          'play__drawer--open': panelVisible,
+          'play__drawer--pinned': panelPinned && panelVisible,
+          'play__drawer--overlay': !panelPinned,
+        }"
+      >
+        <PlaySidePanel
+          :open="panelVisible"
+          :pinned="panelPinned"
+          :status-text="statusText"
+          :difficulty-id="difficultyId"
+          :game-started="gameStarted"
+          :game-over="gameOver"
+          :can-flip="canFlip"
+          :can-undo="canUndo"
+          :can-hint="canHint"
+          :hint-thinking="hintThinking"
+          :actions-visible="!modalOpen"
+          :board-theme="boardTheme"
           :history="history"
+          :move-qualities="moveQualities"
+          :show-move-qualities="showMoveQualities"
           :white-win-pct="whiteWinPct"
           :black-win-pct="blackWinPct"
           :eval-series="evalSeries"
+          :captures-left="captureTrays.left"
+          :captures-right="captureTrays.right"
+          @close="game.setPanelOpen(false)"
+          @update:pinned="game.setPanelPinned($event)"
+          @update:show-move-qualities="game.setShowMoveQualities($event)"
+          @update:board-theme="game.setBoardTheme($event)"
+          @difficulty-change="game.setDifficultyId($event)"
+          @start="startNewGame"
+          @resign="openResignConfirm"
+          @flip="onFlip"
+          @undo="onUndo"
+          @hint="onHint"
         />
-
-        <div v-if="!modalOpen" class="play__actions">
-          <button
-            v-if="!gameStarted || gameOver"
-            type="button"
-            class="play__btn play__btn--active"
-            @click="startNewGame"
-          >
-            Start
-          </button>
-          <button
-            v-else
-            type="button"
-            class="play__btn play__btn--active"
-            @click="openResignConfirm"
-          >
-            Resign
-          </button>
-          <button
-            type="button"
-            class="play__btn"
-            :class="{ 'play__btn--active': canFlip }"
-            :disabled="!canFlip"
-            @click="onFlip"
-          >
-            Flip
-          </button>
-          <button
-            v-if="gameStarted"
-            type="button"
-            class="play__btn"
-            :class="{ 'play__btn--active': canUndo }"
-            :disabled="!canUndo"
-            @click="onUndo"
-          >
-            Undo
-          </button>
-        </div>
-      </aside>
+      </div>
     </div>
 
     <PlayModal
@@ -254,25 +307,56 @@ const choosePromotion = (piece: PromotionPiece) => {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 1.25rem;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0;
   flex: 1;
+  min-height: 0;
   padding: clamp(1rem, 3vw, 2rem);
   animation: play-enter 0.7s var(--ease-out) both;
+  overflow: hidden;
+}
+
+/* Pinned: flush to the nav/edges so the drawer reads as chrome, not a floating card. */
+.play--pinned {
+  padding: 0;
 }
 
 .play__stage {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
-  gap: clamp(1.25rem, 3vw, 2.5rem);
-  width: min(100%, 56rem);
+  gap: 0;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.play__stage--pinned {
+  justify-content: stretch;
+}
+
+.play__board-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.play--pinned .play__board-column {
+  padding: clamp(1rem, 3vw, 2rem);
 }
 
 .play__board {
-  flex: 1 1 18rem;
-  max-width: min(100%, 28rem);
+  position: relative;
+  width: min(100%, 28rem);
+  max-width: 28rem;
   aspect-ratio: 1;
   padding: 0.65rem;
   background: linear-gradient(145deg, var(--color-walnut-light), var(--color-board-edge));
@@ -282,94 +366,68 @@ const choosePromotion = (piece: PromotionPiece) => {
   animation: board-rise 0.85s var(--ease-out) 0.15s both;
 }
 
-/* Isolate chessground from flex/padding quirks so pieces map 1:1 onto squares. */
-.play__board :deep(.cg-wrap) {
+.play__board.board-theme-grey {
+  background: linear-gradient(145deg, #6e6e6e, #3a3a3a);
+}
+
+/* Content box only — hint overlay must share this box with chessground, not the frame padding. */
+.play__board-surface {
+  position: relative;
   width: 100%;
   height: 100%;
 }
 
-.play__panel {
-  flex: 1 1 14rem;
-  max-width: 18rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding-top: 0.25rem;
-  animation: panel-fade 0.8s var(--ease-out) 0.25s both;
-}
-
-.play__status {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--color-ivory);
-}
-
-.play__engine-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.play__difficulty {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.play__difficulty-label {
-  margin: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-ivory-muted);
-}
-
-.play__difficulty-select {
+/* Isolate chessground from flex/padding quirks so pieces map 1:1 onto squares. */
+.play__board-surface :deep(.cg-wrap) {
   width: 100%;
-  padding: 0.45rem 0.5rem;
-  border: 1px solid rgb(232 220 200 / 0.28);
-  border-radius: 0;
-  background: var(--color-felt-deep);
-  color: var(--color-ivory);
-  color-scheme: dark;
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
+  height: 100%;
 }
 
-.play__difficulty-select option {
-  background: var(--color-ink);
-  color: var(--color-ivory);
+/* Tip the checkmated king without fighting chessground translate transforms. */
+.play__board--mate-w :deep(piece.king.white),
+.play__board--mate-b :deep(piece.king.black) {
+  rotate: 270deg;
+  transition: rotate 0.45s var(--ease-out);
 }
 
-.play__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 0.25rem;
+.play__drawer {
+  flex: 0 0 0;
+  width: 0;
+  min-height: 0;
+  overflow: hidden;
+  z-index: 20;
+  transition: flex-basis 0.28s var(--ease-out), width 0.28s var(--ease-out);
 }
 
-.play__btn {
-  flex: 1 1 auto;
-  min-width: 4.5rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid rgb(232 220 200 / 0.28);
-  border-radius: 0;
-  background: transparent;
-  color: var(--color-ivory-muted);
-  cursor: not-allowed;
+.play__drawer--pinned.play__drawer--open {
+  flex: 0 0 18rem;
+  width: 18rem;
+  align-self: stretch;
+  overflow: hidden;
 }
 
-.play__btn--active {
-  color: var(--color-ivory);
-  cursor: pointer;
+.play__drawer--overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18rem;
+  max-width: min(18rem, 100vw);
+  padding-top: 3.6rem; /* below app nav */
+  transform: translateX(100%);
+  transition: transform 0.28s var(--ease-out);
+  pointer-events: none;
 }
 
-.play__btn--active:hover {
-  border-color: rgb(232 220 200 / 0.55);
-  background: rgb(232 220 200 / 0.08);
+.play__drawer--overlay.play__drawer--open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.play__drawer :deep(.side-panel) {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
 }
 
 @keyframes play-enter {
@@ -391,32 +449,10 @@ const choosePromotion = (piece: PromotionPiece) => {
   }
 }
 
-@keyframes panel-fade {
-  from {
-    opacity: 0;
-    transform: translateX(0.5rem);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @media (max-width: 40rem) {
-  .play__panel {
-    max-width: min(100%, 28rem);
-    width: 100%;
-  }
-
-  @keyframes panel-fade {
-    from {
-      opacity: 0;
-      transform: translateY(0.5rem);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .play__drawer--pinned.play__drawer--open {
+    flex-basis: min(18rem, 100%);
+    width: min(18rem, 100%);
   }
 }
 </style>

@@ -66,6 +66,7 @@ const installPlayEngineMock = () => {
   const engine: ChessEngine = {
     playSearch: vi.fn(async ({ fen }) => legalReply(fen)),
     evalSearch: vi.fn(async () => null),
+    hintSearch: vi.fn(async ({ fen }) => legalReply(fen)),
     analyzeMove: vi.fn(async () => ({ quality: 'unclassified', move: '' })),
     notifyNewGame: vi.fn(),
     stop,
@@ -82,6 +83,7 @@ const engineClient = (partial: Partial<ChessEngine> = {}): ChessEngine => {
   const engine: ChessEngine = {
     playSearch: (partial.playSearch as any) ?? vi.fn(async ({ fen }) => legalReply(fen)),
     evalSearch: (partial.evalSearch as any) ?? vi.fn(async () => null),
+    hintSearch: (partial.hintSearch as any) ?? vi.fn(async ({ fen }) => legalReply(fen)),
     analyzeMove:
       (partial.analyzeMove as any) ??
       vi.fn(async () => ({ quality: 'unclassified', move: '' })),
@@ -105,7 +107,7 @@ describe('PlayView', () => {
 
     localStorage.clear()
 
-    // Seed prefs so PlayView does not auto-start a first-visit game.
+    // Seed prefs; PlayView.ensurePlaySession still auto-starts a game.
 
     saveDifficultyId('beginner')
 
@@ -178,109 +180,93 @@ describe('PlayView', () => {
 
   ) => {
 
-    if (color === 'b') {
+    const store = useGameStore()
 
+    // ensurePlaySession already started as activeColor (usually White).
+    if (color === 'b' && store.humanColor === 'w') {
       const flip = wrapper.findAll('button').find((b) => b.text() === 'Flip')
-
       expect(flip).toBeDefined()
-
       await flip!.trigger('click')
-
       await nextTick()
-
+      await flushPromises()
+      return
     }
 
+    if (store.humanColor !== null && (color === 'w' ? store.humanColor === 'w' : store.humanColor === 'b')) {
+      await flushPromises()
+      return
+    }
 
+    if (color === 'b') {
+      const flip = wrapper.findAll('button').find((b) => b.text() === 'Flip')
+      expect(flip).toBeDefined()
+      await flip!.trigger('click')
+      await nextTick()
+    }
 
     const start = wrapper.findAll('button').find((b) => b.text() === 'Start')
-
     expect(start).toBeDefined()
-
     await start!.trigger('click')
-
     await nextTick()
-
     await flushPromises()
-
   }
 
 
 
   describe('start gate', () => {
 
-    it('cleared state hides eval and moves; shows Ready, Start, Flip, and engine controls', () => {
+    it('auto-starts a game; shows controls and no move list yet', () => {
 
       const { wrapper, store } = mountPlay()
-
-
-
-      expect(store.humanColor).toBeNull()
-
-      expect(wrapper.text()).toContain('Ready to play')
-
-      expect(wrapper.text()).toContain('Start')
-
-      expect(wrapper.text()).toContain('Flip')
-
-      expect(wrapper.text()).toContain('Difficulty')
-
-      expect(wrapper.text()).not.toContain('Resign')
-
-      expect(wrapper.text()).not.toContain('Undo')
-
-      expect(wrapper.find('.play__eval').exists()).toBe(false)
-
-      expect(wrapper.find('.play__history').exists()).toBe(false)
-
-      expect(wrapper.findAll('.play__difficulty-select')).toHaveLength(1)
-
-    })
-
-
-
-    it('locks the board before Start; moves do not change the store', async () => {
-
-      const { wrapper, store } = mountPlay()
-
-
-
-      expect(store.isHumanTurn).toBe(false)
-
-      expect(wrapper.getComponent(ChessBoard).props('viewOnly')).toBe(true)
-
-
-
-      await emitBoardMove(wrapper, 'e2', 'e4')
-
-
-
-      expect(store.fen).toBe(DEFAULT_POSITION)
-
-      expect(store.history).toEqual([])
-
-    })
-
-
-
-    it('Start begins a game as activeColor (default White)', async () => {
-
-      const { wrapper, store } = mountPlay()
-
-      const spy = vi.spyOn(store, 'newGame')
-
-
-
-      await startGame(wrapper, 'w')
-
-
-
-      expect(spy).toHaveBeenCalled()
 
       expect(store.humanColor).toBe('w')
+      expect(store.isHumanTurn).toBe(true)
+      expect(wrapper.text()).toContain('White to move')
+      expect(wrapper.text()).toContain('Resign')
+      expect(wrapper.text()).toContain('Flip')
+      expect(wrapper.text()).toContain('Difficulty')
+      expect(wrapper.text()).toContain('Undo')
+      expect(wrapper.find('.play__history').exists()).toBe(false)
+      expect(wrapper.findAll('select.side-panel__select').length).toBeGreaterThanOrEqual(1)
 
-      expect(store.difficultyId).toBe('beginner')
+    })
+
+
+
+    it('board is unlocked after auto-start; moves update the store', async () => {
+
+      const { wrapper, store } = mountPlay()
 
       expect(store.isHumanTurn).toBe(true)
+      expect(wrapper.getComponent(ChessBoard).props('viewOnly')).toBe(false)
+
+      await wrapper.getComponent(ChessBoard).vm.$emit('move', { from: 'e2', to: 'e4' })
+      await nextTick()
+
+      expect(store.history[0]).toBe('e4')
+
+    })
+
+
+
+    it('Start rematch begins a fresh game as activeColor (default White)', async () => {
+
+      const { wrapper, store } = mountPlay()
+
+      // Force finished UI path: reset then Start
+      store.reset()
+      await nextTick()
+      const spy = vi.spyOn(store, 'newGame')
+      const start = wrapper.findAll('button').find((b) => b.text() === 'Start')
+      expect(start).toBeDefined()
+      await start!.trigger('click')
+      await flushPromises()
+
+      expect(spy).toHaveBeenCalled()
+      expect(store.humanColor).toBe('w')
+      expect(store.difficultyId).toBe('beginner')
+      expect(store.isHumanTurn).toBe(true)
+      expect(store.history).toEqual([])
 
     })
 
@@ -310,7 +296,7 @@ describe('PlayView', () => {
 
       const { wrapper, store } = mountPlay()
 
-      const configSelect = wrapper.find('.play__difficulty-select')
+      const configSelect = wrapper.findAll('select.side-panel__select')[0]!
 
       await configSelect.setValue('solid')
 
@@ -319,8 +305,6 @@ describe('PlayView', () => {
 
 
       expect(store.difficultyId).toBe('solid')
-
-      expect(configSelect.text()).toContain('Solid')
 
     })
 

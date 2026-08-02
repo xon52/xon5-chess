@@ -62,3 +62,8 @@ input {
 a {
   color: inherit;
 }
+
+/* Greyscale board: same SVG darkening pattern on a grey light-square base. */
+.board-theme-grey cg-board {
+  background-color: #c8c8c8;
+}

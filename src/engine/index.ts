@@ -10,10 +10,12 @@ export {
   scoreToWhiteBlackPct,
 } from '@/engine/uci'
 export {
+  getFlairMatchLog,
   printFlairMatchStats,
   recordFlairMove,
   resetFlairMatchLog,
 } from '@/engine/flair/log'
+export type { FlairLogQuality } from '@/engine/flair/log'
 
 export const DIFFICULTY_OPTIONS: readonly DifficultyOption[] = FLAIR_CONFIGS.map((c) => ({
   id: c.id,

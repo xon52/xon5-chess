@@ -1,6 +1,7 @@
 import { Chess, type Square } from 'chess.js'
 
 import { analyzePlayedMove } from '@/engine/flair/analyze'
+import { FLAIR_ANALYSIS } from '@/engine/flair/configs'
 import { flairPlaySearch } from '@/engine/flair/play'
 import type { StockfishBackend } from '@/engine/stockfish/backend'
 import type { ChessEngine } from '@/engine/types'
@@ -28,6 +29,14 @@ export const recentMovesFromChess = (chess: Chess, n = 6): UciMove[] =>
 export const createChessEngine = (backend: StockfishBackend): ChessEngine => ({
   playSearch: (opts) => flairPlaySearch(backend, opts),
   evalSearch: (opts) => backend.evalSearch(opts),
+  hintSearch: async ({ fen }) => {
+    const lines = await backend.multipvSearch({
+      fen,
+      depth: FLAIR_ANALYSIS.depth,
+      multipv: 1,
+    })
+    return lines[0]?.move ?? null
+  },
   analyzeMove: (fenBefore, move) => analyzePlayedMove(backend, fenBefore, move),
   notifyNewGame: () => backend.notifyNewGame(),
   stop: () => backend.stop(),

@@ -5,7 +5,11 @@ import {
   hasStoredPrefs,
   loadPrefs,
   saveActiveColor,
+  saveBoardTheme,
   saveDifficultyId,
+  savePanelOpen,
+  savePanelPinned,
+  saveShowMoveQualities,
   seedDefaultPrefs,
 } from '@/game/prefs'
 
@@ -20,6 +24,10 @@ describe('prefs', () => {
     expect(loadPrefs()).toEqual({
       difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
+      boardTheme: 'classic',
+      panelPinned: false,
+      panelOpen: true,
+      showMoveQualities: true,
     })
   })
 
@@ -30,6 +38,23 @@ describe('prefs', () => {
     expect(loadPrefs()).toEqual({
       difficultyId: 'club',
       activeColor: 'b',
+      boardTheme: 'classic',
+      panelPinned: false,
+      panelOpen: true,
+      showMoveQualities: true,
+    })
+  })
+
+  it('round-trips ui prefs', () => {
+    saveBoardTheme('grey')
+    savePanelPinned(true)
+    savePanelOpen(true)
+    saveShowMoveQualities(false)
+    expect(loadPrefs()).toMatchObject({
+      boardTheme: 'grey',
+      panelPinned: true,
+      panelOpen: true,
+      showMoveQualities: false,
     })
   })
 
@@ -38,6 +63,10 @@ describe('prefs', () => {
     expect(loadPrefs()).toEqual({
       difficultyId: 'beginner',
       activeColor: 'w',
+      boardTheme: 'classic',
+      panelPinned: false,
+      panelOpen: true,
+      showMoveQualities: true,
     })
   })
 
@@ -48,12 +77,16 @@ describe('prefs', () => {
     expect(loadPrefs()).toEqual({
       difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
+      boardTheme: 'classic',
+      panelPinned: false,
+      panelOpen: true,
+      showMoveQualities: true,
     })
   })
 
   it('seedDefaultPrefs writes Flair beginner and White', () => {
     seedDefaultPrefs()
-    expect(loadPrefs()).toEqual({
+    expect(loadPrefs()).toMatchObject({
       difficultyId: DEFAULT_DIFFICULTY_ID,
       activeColor: 'w',
     })

@@ -14,6 +14,8 @@ export type ChessEngine = {
     recentMoves?: UciMove[]
   }): Promise<UciMove | null>
   evalSearch(opts: { fen: string }): Promise<UciScore | null>
+  /** Full-strength top line for the hint arrow. */
+  hintSearch(opts: { fen: string }): Promise<UciMove | null>
   analyzeMove(fenBefore: string, move: UciMove): Promise<Omit<FlairMoveLog, 'side'>>
   notifyNewGame(): void
   stop(): void
