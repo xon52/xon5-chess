@@ -11,6 +11,8 @@ const props = defineProps<{
   open: boolean
   pinned: boolean
   statusText: string
+  openingWhiteLabel: string
+  openingBlackLabel: string
   difficultyId: string
   gameStarted: boolean
   gameOver: boolean
@@ -23,6 +25,7 @@ const props = defineProps<{
   history: string[]
   moveQualities: FlairLogQuality[]
   showMoveQualities: boolean
+  humanColor: 'w' | 'b' | null
   whiteWinPct: number | null
   blackWinPct: number | null
   evalSeries: EvalPoint[]
@@ -285,6 +288,9 @@ const pieceName = (type: string) => {
             :history="history"
             :move-qualities="moveQualities"
             :show-move-qualities="showMoveQualities"
+            :opening-white-label="openingWhiteLabel"
+            :opening-black-label="openingBlackLabel"
+            :human-color="humanColor"
             :white-win-pct="whiteWinPct"
             :black-win-pct="blackWinPct"
             :eval-series="evalSeries"

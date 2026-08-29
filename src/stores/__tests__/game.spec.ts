@@ -134,7 +134,22 @@ describe('useGameStore', () => {
     expect(store.isHumanTurn).toBe(true)
     expect(store.orientation).toBe('white')
     expect(store.history).toEqual([])
+    expect(store.openingWhiteLabel).toBe('')
+    expect(store.openingBlackLabel).toBe('')
     expect(store.legalDests.get('e2')).toEqual(expect.arrayContaining(['e3', 'e4']))
+  })
+
+  it('opening labels update live and clear when leaving book', () => {
+    const store = startAsWhite()
+    expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
+    expect(store.openingWhiteLabel).toBe('')
+    expect(store.openingBlackLabel).toBe('')
+    expect(store.applyEngineMove({ from: 'c7', to: 'c5' }).ok).toBe(true)
+    expect(store.openingWhiteLabel).toBe('B22 Sicilian, Alapin')
+    expect(store.openingBlackLabel).toBe('B20 Sicilian Defense')
+    expect(store.tryMove({ from: 'a2', to: 'a3' }).ok).toBe(true)
+    expect(store.openingWhiteLabel).toBe('')
+    expect(store.openingBlackLabel).toBe('')
   })
 
   it('setDifficultyId persists across reset', () => {

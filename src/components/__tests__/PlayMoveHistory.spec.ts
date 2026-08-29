@@ -82,6 +82,7 @@ describe('PlayMoveHistory', () => {
         history: ['e4', 'e5', 'Nf3', 'Nc6'],
         moveQualities: [],
         showMoveQualities: true,
+        humanColor: 'w',
         whiteWinPct: 62,
         blackWinPct: 38,
         evalSeries: [
@@ -94,6 +95,61 @@ describe('PlayMoveHistory', () => {
     expect(wrapper.find('.play__history-title').text()).toBe('62 / 38')
     expect(wrapper.find('.play__eval-chart-line--green').exists()).toBe(true)
     expect(wrapper.find('.play__eval-chart-line--red').exists()).toBe(true)
+  })
+
+  it('shows you/opponent odds when human is Black (White 97% → 3 / 97)', () => {
+    const wrapper = mount(PlayMoveHistory, {
+      props: {
+        history: ['e4', 'e5'],
+        moveQualities: [],
+        showMoveQualities: true,
+        humanColor: 'b',
+        whiteWinPct: 97,
+        blackWinPct: 3,
+        evalSeries: [{ ply: 2, white: 97 }],
+      },
+    })
+
+    expect(wrapper.find('.play__history-title').text()).toBe('3 / 97')
+    expect(wrapper.find('.play__eval-chart-line--red').exists()).toBe(true)
+    expect(wrapper.find('.play__eval-chart-line--green').exists()).toBe(false)
+  })
+
+  it('shows White and Black opening rows when in book', () => {
+    const wrapper = mount(PlayMoveHistory, {
+      props: {
+        history: ['d4', 'd5', 'c4'],
+        moveQualities: [],
+        showMoveQualities: true,
+        openingWhiteLabel: "D06 Queen's Gambit",
+        openingBlackLabel: "D30 Queen's Gambit Declined",
+        whiteWinPct: null,
+        blackWinPct: null,
+        evalSeries: [],
+      },
+    })
+
+    const rows = wrapper.findAll('.play__history-opening')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain("D06 Queen's Gambit")
+    expect(rows[1]!.text()).toContain("D30 Queen's Gambit Declined")
+  })
+
+  it('omits opening block when both labels are empty', () => {
+    const wrapper = mount(PlayMoveHistory, {
+      props: {
+        history: ['e4'],
+        moveQualities: [],
+        showMoveQualities: true,
+        openingWhiteLabel: '',
+        openingBlackLabel: '',
+        whiteWinPct: null,
+        blackWinPct: null,
+        evalSeries: [],
+      },
+    })
+
+    expect(wrapper.find('.play__history-openings').exists()).toBe(false)
   })
 
   it('scrolls to the end when history grows', async () => {

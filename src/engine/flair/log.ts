@@ -10,6 +10,7 @@ export type FlairLogQuality =
   | 'unclassified'
   | 'fallback'
   | 'empty-multipv'
+  | 'book'
 
 export type FlairMoveLog = {
   side: FlairSide

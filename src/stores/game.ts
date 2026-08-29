@@ -15,6 +15,10 @@ import {
   type FlairLogQuality,
 } from '@/engine'
 import {
+  resolveOpeningSideLabels,
+  uciHistoryFromVerbose,
+} from '@/engine/opening/book'
+import {
   buildLegalDests,
   canUndo as canUndoPlies,
   getLastMove,
@@ -69,6 +73,8 @@ export const useGameStore = defineStore('game', () => {
   const fen = ref(chess.fen())
   const turn = ref<Color>(chess.turn())
   const history = ref<string[]>([])
+  const openingWhiteLabel = ref('')
+  const openingBlackLabel = ref('')
   const moveQualities = ref<FlairLogQuality[]>([])
   const status = ref<GameStatus>({ kind: 'playing' })
   const humanColor = ref<'w' | 'b' | null>(null)
@@ -175,6 +181,16 @@ export const useGameStore = defineStore('game', () => {
     history.value = chess.history()
     status.value = deriveStatus(chess)
     trimMoveQualities()
+    const uci = uciHistoryFromVerbose(
+      chess.history({ verbose: true }) as Array<{
+        from: string
+        to: string
+        promotion?: string
+      }>,
+    )
+    const labels = resolveOpeningSideLabels(uci)
+    openingWhiteLabel.value = labels.white
+    openingBlackLabel.value = labels.black
   }
 
   const invalidatePlaySearch = (): Promise<void> => {
@@ -641,6 +657,8 @@ export const useGameStore = defineStore('game', () => {
     fen,
     turn,
     history,
+    openingWhiteLabel,
+    openingBlackLabel,
     moveQualities,
     status,
     humanColor,

@@ -5,6 +5,7 @@ import { clampFlairMultipvCap, getFlairConfig } from '@/engine/flair/configs'
 import { formatFlairMove, recordFlairMove } from '@/engine/flair/log'
 import { buildCandidateMoves } from '@/engine/flair/recency'
 import { sampleClassifiedMove } from '@/engine/flair/sample'
+import { tryBookMove } from '@/engine/opening/book'
 import type { StockfishBackend } from '@/engine/stockfish/backend'
 import type { UciMove } from '@/engine/uci'
 
@@ -47,6 +48,18 @@ export const flairPlaySearch = async (
       move: formatFlairMove(move),
     })
     return move
+  }
+
+  const bookHit = await tryBookMove(backend, { fen, difficultyId })
+  if (bookHit) {
+    recordFlairMove({
+      side: 'computer',
+      quality: 'book',
+      move: formatFlairMove(bookHit.move),
+      swingCp: bookHit.swingCp,
+      score: bookHit.score,
+    })
+    return bookHit.move
   }
 
   const cap = clampFlairMultipvCap(cfg.multipvCap, legal.length)
