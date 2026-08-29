@@ -54,6 +54,33 @@ describe('chess engine play', () => {
     expect(move).toEqual({ from: 'a2', to: 'a3' } satisfies UciMove)
   })
 
+  it('uses opening book when safe replies exist (skips Flair sample)', async () => {
+    const multipvSearch = vi
+      .fn()
+      // book: unrestricted best
+      .mockResolvedValueOnce([
+        { move: { from: 'e2', to: 'e4' }, score: { kind: 'cp', value: 40 } },
+      ])
+      // book: scored candidates
+      .mockResolvedValueOnce([
+        { move: { from: 'e2', to: 'e4' }, score: { kind: 'cp', value: 40 } },
+        { move: { from: 'd2', to: 'd4' }, score: { kind: 'cp', value: 20 } },
+      ])
+
+    const backend = stubBackend({ multipvSearch })
+    const eng = createChessEngine(backend)
+    const rng = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const move = await eng.playSearch({
+      fen: START_FEN,
+      difficultyId: 'novice',
+    })
+    rng.mockRestore()
+
+    // Only the two book safety searches — no Flair shallow/deep.
+    expect(multipvSearch).toHaveBeenCalledTimes(2)
+    expect(move).toEqual({ from: 'e2', to: 'e4' })
+  })
+
   it('delegates lifecycle to stockfish backend', () => {
     const backend = stubBackend()
     const eng = createChessEngine(backend)

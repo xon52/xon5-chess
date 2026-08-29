@@ -18,6 +18,8 @@ const {
   fen,
   turn,
   history,
+  openingWhiteLabel,
+  openingBlackLabel,
   moveQualities,
   status,
   legalDests,
@@ -169,7 +171,11 @@ const onUndo = () => {
   if (modalOpen.value) {
     return
   }
-  endgameDismissed.value = true
+  // Only a finished game has a dialog to dismiss; setting this mid-game would
+  // suppress the dialog for the eventual result.
+  if (gameOver.value) {
+    endgameDismissed.value = true
+  }
   game.undoUntilHumanTurn()
 }
 
@@ -202,7 +208,6 @@ const choosePromotion = (piece: PromotionPiece) => {
 
 const dismissEndgame = () => {
   endgameDismissed.value = true
-  startNewGame()
 }
 </script>
 
@@ -260,6 +265,8 @@ const dismissEndgame = () => {
           :open="panelVisible"
           :pinned="panelPinned"
           :status-text="statusText"
+          :opening-white-label="openingWhiteLabel"
+          :opening-black-label="openingBlackLabel"
           :difficulty-id="difficultyId"
           :game-started="gameStarted"
           :game-over="gameOver"
@@ -272,6 +279,7 @@ const dismissEndgame = () => {
           :history="history"
           :move-qualities="moveQualities"
           :show-move-qualities="showMoveQualities"
+          :human-color="humanColor"
           :white-win-pct="whiteWinPct"
           :black-win-pct="blackWinPct"
           :eval-series="evalSeries"
@@ -383,11 +391,35 @@ const dismissEndgame = () => {
   height: 100%;
 }
 
-/* Tip the checkmated king without fighting chessground translate transforms. */
+/*
+ * Tip the checkmated king without fighting chessground's inline translate.
+ * CSS `rotate` + `transform: translate(...)` swings the piece around the
+ * board origin in Chromium/Edge (off-board → clipped by overflow:hidden).
+ * Hide the upright glyph and rotate an ::after copy instead.
+ */
 .play__board--mate-w :deep(piece.king.white),
 .play__board--mate-b :deep(piece.king.black) {
-  rotate: 270deg;
-  transition: rotate 0.45s var(--ease-out);
+  background-size: 0 0;
+}
+
+.play__board--mate-w :deep(piece.king.white)::after,
+.play__board--mate-b :deep(piece.king.black)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: inherit;
+  background-size: cover;
+  transform-origin: 50% 100%;
+  animation: tip-king 0.45s var(--ease-out) forwards;
+}
+
+@keyframes tip-king {
+  from {
+    rotate: 0deg;
+  }
+  to {
+    rotate: 90deg;
+  }
 }
 
 .play__drawer {

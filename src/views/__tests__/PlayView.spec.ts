@@ -1142,6 +1142,57 @@ describe('PlayView', () => {
 
 
 
+    const expectMatedKingOnBoard = (
+      wrapper: ReturnType<typeof mount>,
+      kingSelector: string,
+    ) => {
+      const king = wrapper.find(kingSelector).element as HTMLElement
+      const board = wrapper.find('.play__board').element as HTMLElement
+      // Chessground still owns positioning via translate; tip CSS must not yank the piece off-board.
+      expect(getComputedStyle(king).rotate).toBe('none')
+      const kingRect = king.getBoundingClientRect()
+      const boardRect = board.getBoundingClientRect()
+      expect(kingRect.x).toBeGreaterThanOrEqual(boardRect.x - 1)
+      expect(kingRect.y).toBeGreaterThanOrEqual(boardRect.y - 1)
+      expect(kingRect.x + kingRect.width).toBeLessThanOrEqual(boardRect.x + boardRect.width + 1)
+      expect(kingRect.y + kingRect.height).toBeLessThanOrEqual(boardRect.y + boardRect.height + 1)
+    }
+
+    it('keeps the mated white king on the board for the tip animation', async () => {
+      void engineClient({ playSearch: vi.fn(async () => null) })
+      const { wrapper, store } = mountPlay()
+      await startGame(wrapper, 'w')
+
+      // Fool's mate — human (white) is checkmated.
+      expect(store.tryMove({ from: 'f2', to: 'f3' }).ok).toBe(true)
+      await flushPromises()
+      expect(store.applyEngineMove({ from: 'e7', to: 'e5' }).ok).toBe(true)
+      expect(store.tryMove({ from: 'g2', to: 'g4' }).ok).toBe(true)
+      await flushPromises()
+      expect(store.applyEngineMove({ from: 'd8', to: 'h4' }).ok).toBe(true)
+      await nextTick()
+
+      expect(store.status).toEqual({ kind: 'checkmate', winner: 'b' })
+      expect(wrapper.find('.play__board--mate-w').exists()).toBe(true)
+      expect(wrapper.find('piece.king.white').exists()).toBe(true)
+      expectMatedKingOnBoard(wrapper, 'piece.king.white')
+    })
+
+    it('keeps the mated black king on the board when the human wins', async () => {
+      void engineClient({ playSearch: vi.fn(async () => null) })
+      const { wrapper, store } = mountPlay()
+      await startGame(wrapper, 'w')
+
+      // Scholar's mate — human (white) wins.
+      expect(store.loadFen('r1bqkb1r/pppp1Qpp/2n2n2/4p2Q/2B1P1B1/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4')).toBe(true)
+      await nextTick()
+
+      expect(store.status).toEqual({ kind: 'checkmate', winner: 'w' })
+      expect(wrapper.find('.play__board--mate-b').exists()).toBe(true)
+      expect(wrapper.find('piece.king.black').exists()).toBe(true)
+      expectMatedKingOnBoard(wrapper, 'piece.king.black')
+    })
+
     it('Undo after engine mate restores human turn and unlocks the board', async () => {
 
       void engineClient({ playSearch: vi.fn(async () => null) })
@@ -1190,6 +1241,39 @@ describe('PlayView', () => {
 
       expect(wrapper.getComponent(ChessBoard).props('viewOnly')).toBe(false)
 
+    })
+
+
+
+    it('still shows the endgame dialog after an earlier mid-game Undo', async () => {
+      void engineClient({ playSearch: vi.fn(async () => null) })
+      // Dialogs teleport to body and earlier tests leave theirs behind.
+      document.body.innerHTML = ''
+
+      const { wrapper, store } = mountPlay()
+      await startGame(wrapper, 'w')
+
+      expect(store.tryMove({ from: 'e2', to: 'e4' }).ok).toBe(true)
+      await flushPromises()
+      await wrapper.findAll('button').find((b) => b.text() === 'Undo')!.trigger('click')
+      await nextTick()
+      expect(store.history).toEqual([])
+
+      // Fool's mate — human (white) is checkmated.
+      expect(store.tryMove({ from: 'f2', to: 'f3' }).ok).toBe(true)
+      await flushPromises()
+      expect(store.applyEngineMove({ from: 'e7', to: 'e5' }).ok).toBe(true)
+      expect(store.tryMove({ from: 'g2', to: 'g4' }).ok).toBe(true)
+      await flushPromises()
+      expect(store.applyEngineMove({ from: 'd8', to: 'h4' }).ok).toBe(true)
+      await nextTick()
+
+      expect(store.status).toEqual({ kind: 'checkmate', winner: 'b' })
+      const dialog = document.body.querySelector('.endgame')
+      expect(dialog).not.toBeNull()
+      expect(dialog!.textContent).toContain('You died')
+
+      wrapper.unmount()
     })
 
 

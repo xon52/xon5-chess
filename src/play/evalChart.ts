@@ -18,7 +18,7 @@ const sideOf = (white: number): 'green' | 'red' | 'neutral' => {
   return 'neutral'
 }
 
-/** Map White % to SVG y (0% at bottom, 100% at top). */
+/** Map you-win % to SVG y (0% at bottom, 100% at top). */
 const pctToY = (white: number, height: number, padY: number): number => {
   const inner = height - padY * 2
   return padY + inner * (1 - white / 100)
@@ -60,17 +60,28 @@ const appendLine = (
 }
 
 /**
- * Build SVG path `d` strings for White win% series.
- * Green when White > 50; red when White < 50; crosses 50 via interpolated points.
+ * Build SVG path `d` strings for win% series.
+ * Points stay White-centric in storage; pass `humanColor: 'b'` to chart you/opponent
+ * (green when you > 50). Crosses 50 via interpolated points.
  */
 export const buildEvalChartPaths = (
   series: EvalPoint[],
-  opts: { width: number; height: number; padX?: number; padY?: number },
+  opts: {
+    width: number
+    height: number
+    padX?: number
+    padY?: number
+    humanColor?: 'w' | 'b' | null
+  },
 ): EvalChartPaths => {
   const padX = opts.padX ?? 4
   const padY = opts.padY ?? 4
+  const viewed =
+    opts.humanColor === 'b'
+      ? series.map((p) => ({ ply: p.ply, white: 100 - p.white }))
+      : series
   const midlineY = pctToY(50, opts.height, padY)
-  const coords = toPoints(series, opts.width, opts.height, padX, padY)
+  const coords = toPoints(viewed, opts.width, opts.height, padX, padY)
 
   if (coords.length === 0) {
     return { green: '', red: '', midlineY }
@@ -78,7 +89,7 @@ export const buildEvalChartPaths = (
 
   if (coords.length === 1) {
     const p = coords[0]!
-    const side = sideOf(series[0]!.white)
+    const side = sideOf(viewed[0]!.white)
     const d = `M ${p.x} ${p.y} L ${p.x} ${p.y}`
     return {
       green: side === 'green' ? d : '',
@@ -93,8 +104,8 @@ export const buildEvalChartPaths = (
   const redLast = { point: null as XY | null }
 
   for (let i = 0; i < coords.length - 1; i++) {
-    const a = series[i]!
-    const b = series[i + 1]!
+    const a = viewed[i]!
+    const b = viewed[i + 1]!
     const pa = coords[i]!
     const pb = coords[i + 1]!
     const sa = sideOf(a.white)

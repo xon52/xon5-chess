@@ -8,6 +8,9 @@ Instead it:
 3. Labels each move by **how much worse it is than the best** (swing)
 4. Rolls a quality bucket from level weights, then picks a move in that bucket
 
+In the opening, a curated book may short-circuit steps 1–4 when a safe theory
+reply exists (see **Opening book** below).
+
 Eval bar / win% still uses the separate full-strength Stockfish eval path.
 
 ## Pipeline
@@ -49,12 +52,13 @@ Human moves are classified the same way for console calibration logs, but on a
 | File | Role |
 |------|------|
 | `configs.ts` | Levels, weights, depths, recency bias, classify thresholds |
-| `play.ts` | Play pipeline: candidate → score → classify → sample |
+| `play.ts` | Play pipeline: book gate → candidate → score → classify → sample |
 | `analyze.ts` | Human-move MultiPV classification |
 | `classify.ts` | Swing → quality buckets |
 | `sample.ts` | Weighted bucket roll + in-bucket pick |
 | `recency.ts` | Tunnel vision / takeback scoring |
 | `log.ts` | Console move logs + end-of-match early/mid/end stats |
+| `../opening/` | Curated book catalog, FEN index, safety gate, name labels |
 
 The app-facing API is `createChessEngine(backend)` / `getEngine()` in
 `src/engine/` (play + eval + analyze on one facade).
@@ -76,6 +80,28 @@ large ±sentinels). Thresholds live in `FLAIR_THRESHOLDS`:
 Tweaking thresholds changes how often buckets fill, not how often they are
 chosen. Wider “great/good” bands → more strong-looking moves available;
 stricter blunder floor → fewer true disasters labeled blunder.
+
+## Opening book
+
+Before MultiPV classify/sample, Flair consults a curated ~50-line book
+([`../opening/`](../opening/)). Book moves **bypass** quality-bucket sampling.
+
+| Level | Book |
+|-------|------|
+| Beginner | off |
+| Novice | top 5 by popularity rank |
+| Club | top 15 |
+| Solid | top 30 |
+| Expert / Master / GM | all |
+
+**Safety gate:** unrestricted MultiPV-1 best vs each book reply at depth 8.
+A reply is kept only if its STM swing vs best is ≥ `BOOK_MAX_SWING_CP` (−80)
+and not a losing mate. Among safe replies, pick with weights `1/rank`.
+If none remain (or the position is out of book), fall through to the normal
+Flair pipeline.
+
+Opening **names** (ECO + name) are resolved separately from UCI history for the
+UI — independent of whether the engine used the book that ply.
 
 ## What to change for difficulty
 

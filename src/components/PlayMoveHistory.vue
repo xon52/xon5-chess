@@ -14,6 +14,9 @@ const props = defineProps<{
   history: string[]
   moveQualities: FlairLogQuality[]
   showMoveQualities: boolean
+  openingWhiteLabel?: string
+  openingBlackLabel?: string
+  humanColor?: 'w' | 'b' | null
   whiteWinPct: number | null
   blackWinPct: number | null
   evalSeries: EvalPoint[]
@@ -28,8 +31,12 @@ const CHART_H = 64
 
 const showGraph = computed(() => props.history.length >= 2)
 
+const showOpening = computed(
+  () => Boolean(props.openingWhiteLabel) || Boolean(props.openingBlackLabel),
+)
+
 const evalTitle = computed(() =>
-  formatEvalDisplay(props.whiteWinPct, props.blackWinPct),
+  formatEvalDisplay(props.whiteWinPct, props.blackWinPct, props.humanColor ?? 'w'),
 )
 
 const chartPaths = computed(() =>
@@ -38,6 +45,7 @@ const chartPaths = computed(() =>
     height: CHART_H,
     padX: 6,
     padY: 6,
+    humanColor: props.humanColor ?? 'w',
   }),
 )
 
@@ -93,13 +101,24 @@ const iconGlyph = (kind: string) => {
 
 <template>
   <div class="play__history">
+    <div v-if="showOpening" class="play__history-openings" aria-label="Opening">
+      <p v-if="openingWhiteLabel" class="play__history-opening">
+        <span class="play__history-opening-side">White</span>
+        {{ openingWhiteLabel }}
+      </p>
+      <p v-if="openingBlackLabel" class="play__history-opening">
+        <span class="play__history-opening-side">Black</span>
+        {{ openingBlackLabel }}
+      </p>
+    </div>
+
     <template v-if="showGraph">
-      <h2 class="play__history-title" aria-label="Win probability">{{ evalTitle }}</h2>
+      <h2 class="play__history-title" aria-label="You versus opponent win probability">{{ evalTitle }}</h2>
       <svg
         class="play__eval-chart"
         :viewBox="`0 0 ${CHART_W} ${CHART_H}`"
         role="img"
-        aria-label="Win probability over moves"
+        aria-label="Your win probability over moves"
         preserveAspectRatio="none"
       >
         <line
@@ -164,6 +183,32 @@ const iconGlyph = (kind: string) => {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+.play__history-opening {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--color-ivory-muted);
+}
+
+.play__history-openings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.play__history-opening-side {
+  display: inline-block;
+  min-width: 2.75rem;
+  margin-right: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ivory);
+  opacity: 0.75;
 }
 
 .play__history-title {

@@ -15,12 +15,20 @@ export const PROMOTION_CHOICES: {
   { piece: 'n', name: 'knight', label: 'Knight' },
 ]
 
+/**
+ * You / opponent win%. Store keeps White-centric values; flip when the human is Black
+ * so the panel matches capture trays (you left, opponent right).
+ */
 export const formatEvalDisplay = (
   whiteWinPct: number | null,
   blackWinPct: number | null,
+  humanColor: 'w' | 'b' | null = 'w',
 ): string => {
-  if (whiteWinPct === null) {
+  if (whiteWinPct === null || blackWinPct === null) {
     return '50 / 50'
+  }
+  if (humanColor === 'b') {
+    return `${blackWinPct} / ${whiteWinPct}`
   }
   return `${whiteWinPct} / ${blackWinPct}`
 }

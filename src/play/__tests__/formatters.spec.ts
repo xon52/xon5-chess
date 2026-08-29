@@ -13,8 +13,12 @@ describe('formatEvalDisplay', () => {
     expect(formatEvalDisplay(null, null)).toBe('50 / 50')
   })
 
-  it('formats White / Black percentages', () => {
-    expect(formatEvalDisplay(62, 38)).toBe('62 / 38')
+  it('formats you / opponent as White / Black when human is White', () => {
+    expect(formatEvalDisplay(62, 38, 'w')).toBe('62 / 38')
+  })
+
+  it('flips to you / opponent when human is Black (losing looks like 3 / 97, not 97 / 3)', () => {
+    expect(formatEvalDisplay(97, 3, 'b')).toBe('3 / 97')
   })
 })
 
@@ -56,7 +60,7 @@ describe('buildEvalChartPaths', () => {
     expect(paths.red).toBe('')
   })
 
-  it('marks White-favored segments green and Black-favored red', () => {
+  it('marks you-favored segments green and opponent-favored red', () => {
     const paths = buildEvalChartPaths(
       [
         { ply: 2, white: 60 },
@@ -70,6 +74,27 @@ describe('buildEvalChartPaths', () => {
     expect(paths.red).toContain('M')
     expect(paths.green.length).toBeGreaterThan(0)
     expect(paths.red.length).toBeGreaterThan(0)
+  })
+
+  it('from Black’s seat, White-winning positions chart red (you are losing)', () => {
+    const asWhite = buildEvalChartPaths([{ ply: 2, white: 97 }], {
+      width: 100,
+      height: 40,
+      padX: 0,
+      padY: 0,
+      humanColor: 'w',
+    })
+    const asBlack = buildEvalChartPaths([{ ply: 2, white: 97 }], {
+      width: 100,
+      height: 40,
+      padX: 0,
+      padY: 0,
+      humanColor: 'b',
+    })
+    expect(asWhite.green).toContain('M')
+    expect(asWhite.red).toBe('')
+    expect(asBlack.red).toContain('M')
+    expect(asBlack.green).toBe('')
   })
 
   it('starts a fresh subpath when the favored side resumes after a cross', () => {
